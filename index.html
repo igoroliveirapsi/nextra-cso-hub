@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nextra CSO Hub — Full Version 1.0</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.12.7/Recharts.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --p:#6D40E6;--pl:#8B6DF0;--pd:#4A2BAD;--pbg:#F0EDF9;--pb:#D5CBF5;
+  --dark:#1A1730;--dark2:#251F45;--dark3:#2D2860;
+  --ink:#1A1A1A;--mid:#444460;--muted:#6B6990;--line:#E4E0F5;--bg:#F7F6FC;
+  --green:#10B981;--red:#EF4444;--amber:#F59E0B;--blue:#3B82F6;
+}
+html,body,#root{height:100%;font-family:'Inter',system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+button{cursor:pointer;font-family:inherit}input,select,textarea{font-family:inherit}
+::-webkit-scrollbar{width:4px;height:4px}
+::-webkit-scrollbar-thumb{background:var(--pb);border-radius:4px}
+
+/* TOASTS */
+.toasts{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{padding:11px 16px;border-radius:8px;font-size:13px;font-weight:500;min-width:240px;max-width:360px;box-shadow:0 4px 16px rgba(0,0,0,.15);animation:toastIn .2s ease;pointer-events:auto;line-height:1.4}
+.toast.success{background:#ECFDF5;color:#065F46;border-left:4px solid var(--green)}
+.toast.error  {background:#FEF2F2;color:#991B1B;border-left:4px solid var(--red)}
+.toast.info   {background:var(--pbg);color:var(--pd);border-left:4px solid var(--p)}
+.toast.warn   {background:#FFFBEB;color:#92400E;border-left:4px solid var(--amber)}
+@keyframes toastIn{from{transform:translateX(110%);opacity:0}to{transform:none;opacity:1}}
+
+/* LOADING */
+.spinner{display:inline-block;border:2px solid rgba(109,64,230,.18);border-top-color:var(--p);border-radius:50%;animation:spin .6s linear infinite}
+.spinner.sm{width:13px;height:13px}.spinner.md{width:18px;height:18px}.spinner.lg{width:32px;height:32px}
+.spinner.white{border-color:rgba(255,255,255,.2);border-top-color:#fff}
+@keyframes spin{to{transform:rotate(360deg)}}
+.loading-page{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;color:var(--muted);font-size:14px}
+.loading-full{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;color:var(--muted);font-size:13px}
+
+/* LOGIN */
+.login-wrap{min-height:100%;background:var(--dark);display:flex;align-items:center;justify-content:center;padding:20px;position:relative;overflow:hidden}
+.login-wrap::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 50% at 50% 0%,rgba(109,64,230,.38) 0%,transparent 70%);pointer-events:none}
+.login-box{background:var(--dark2);border:1px solid var(--dark3);border-radius:16px;padding:40px 44px;width:420px;max-width:calc(100vw - 32px);position:relative;z-index:1}
+.login-logo{display:flex;align-items:center;gap:8px;margin-bottom:24px}
+.login-logo .dot{width:9px;height:9px;border-radius:50%;background:var(--p)}
+.login-logo span{font-size:16px;font-weight:700;color:#fff}
+.login-logo small{font-size:10px;font-weight:700;background:rgba(109,64,230,.3);color:var(--pl);padding:2px 7px;border-radius:10px}
+.login-title{font-size:24px;font-weight:900;color:#fff;margin-bottom:4px}
+.login-sub{font-size:13px;color:rgba(255,255,255,.38);margin-bottom:24px}
+.field-lbl{font-size:11px;font-weight:700;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:.05em;display:block;margin-bottom:6px}
+.field-inp{width:100%;padding:11px 14px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);border-radius:8px;color:#fff;font-size:14px;outline:none;transition:.15s;box-sizing:border-box}
+.field-inp:focus{border-color:var(--p);background:rgba(109,64,230,.12)}
+.field-inp::placeholder{color:rgba(255,255,255,.2)}
+.login-btn{width:100%;padding:12px;background:var(--p);border:none;border-radius:8px;color:#fff;font-size:14px;font-weight:700;cursor:pointer;transition:.15s;display:flex;align-items:center;justify-content:center;gap:8px}
+.login-btn:hover{background:var(--pl)}
+.login-btn:disabled{opacity:.5;cursor:not-allowed}
+.login-err{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.25);color:#FCA5A5;padding:10px 14px;border-radius:8px;font-size:13px;margin-bottom:16px;line-height:1.5}
+.login-api{margin-top:16px;padding:10px 12px;background:rgba(255,255,255,.04);border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.login-api-url{font-size:11px;color:rgba(255,255,255,.3);font-family:monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.login-api-btn{font-size:11px;font-weight:600;color:var(--pl);cursor:pointer;flex-shrink:0}
+.login-api-inp{flex:1;padding:7px 10px;background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);border-radius:6px;color:#fff;font-size:12px;outline:none;font-family:monospace}
+.login-api-save{padding:7px 12px;background:var(--p);border:none;border-radius:6px;color:#fff;font-size:12px;font-weight:600;cursor:pointer}
+
+/* APP */
+.app{display:flex;height:100vh;overflow:hidden}
+
+/* SIDEBAR */
+.sidebar{width:212px;flex-shrink:0;background:var(--dark);display:flex;flex-direction:column}
+.sb-brand{padding:16px 14px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid rgba(255,255,255,.06)}
+.sb-brand .dot{width:8px;height:8px;border-radius:50%;background:var(--p);flex-shrink:0}
+.sb-brand span{font-size:13px;font-weight:700;color:#fff}
+.sb-brand small{font-size:9px;font-weight:700;background:rgba(109,64,230,.25);color:var(--pl);padding:1px 5px;border-radius:8px}
+.sb-nav{flex:1;padding:10px 6px;overflow-y:auto}
+.sb-grp{font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:rgba(255,255,255,.2);padding:10px 8px 4px}
+.sb-item{display:flex;align-items:center;gap:9px;padding:8px 9px;border-radius:7px;color:rgba(255,255,255,.42);font-size:12px;font-weight:500;cursor:pointer;width:100%;text-align:left;border:none;background:none;border-left:2px solid transparent;margin-bottom:1px;transition:.12s}
+.sb-item:hover{color:#fff;background:rgba(255,255,255,.05)}
+.sb-item.active{color:#fff;background:rgba(109,64,230,.2);border-left-color:var(--p)}
+.sb-item .icon{font-size:14px;width:18px;text-align:center;opacity:.8;flex-shrink:0}
+.sb-badge{margin-left:auto;background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;flex-shrink:0}
+.sb-badge.warn{background:var(--amber)}
+.sb-badge.ok{background:var(--green)}
+.sb-user{padding:10px 12px;border-top:1px solid rgba(255,255,255,.06);display:flex;align-items:center;gap:10px}
+.sb-avatar{width:28px;height:28px;border-radius:50%;background:var(--p);display:grid;place-items:center;font-size:12px;font-weight:700;color:#fff;flex-shrink:0;text-transform:uppercase}
+.sb-uinfo{flex:1;min-width:0}
+.sb-uname{font-size:11px;font-weight:600;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-urole{font-size:9px;color:rgba(255,255,255,.3)}
+.sb-logout{background:none;border:none;color:rgba(255,255,255,.22);font-size:16px;cursor:pointer;padding:4px;border-radius:4px;transition:.15s;flex-shrink:0}
+.sb-logout:hover{color:#fff;background:rgba(255,255,255,.08)}
+
+/* MAIN */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+.hbar{padding:4px 20px;display:flex;align-items:center;gap:8px;font-size:11px;font-weight:600;flex-shrink:0}
+.hbar.ok{background:#F0FDF4;color:#166534}
+.hbar.fail{background:#FEF2F2;color:#991B1B}
+.hbar.loading{background:var(--pbg);color:var(--pd)}
+.hbar-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.hbar-dot.ok{background:var(--green)}.hbar-dot.fail{background:var(--red)}.hbar-dot.loading{background:var(--p);animation:pulse .8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.topbar{padding:0 22px;height:54px;display:flex;align-items:center;justify-content:space-between;background:#fff;border-bottom:1px solid var(--line);flex-shrink:0}
+.topbar-title{font-size:15px;font-weight:800;color:var(--dark)}
+.topbar-actions{display:flex;gap:8px}
+.content{flex:1;overflow-y:auto;padding:20px}
+
+/* BUTTONS */
+.btn{padding:7px 14px;border-radius:8px;font-size:13px;font-weight:600;border:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:.15s;white-space:nowrap}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.btn-sm{padding:5px 11px;font-size:12px}
+.btn-xs{padding:3px 9px;font-size:11px}
+.btn-purple{background:var(--p);color:#fff}.btn-purple:hover{background:var(--pl)}
+.btn-outline{background:#fff;color:var(--mid);border:1px solid var(--line)}.btn-outline:hover{border-color:var(--p);color:var(--p)}
+.btn-success{background:#ECFDF5;color:#065F46;border:1px solid #A7F3D0}.btn-success:hover{background:#D1FAE5}
+.btn-danger{background:#FEF2F2;color:#991B1B;border:1px solid #FECACA}.btn-danger:hover{background:#FEE2E2}
+.btn-ghost{background:transparent;color:var(--p);border:1px solid var(--pb)}.btn-ghost:hover{background:var(--pbg)}
+
+/* CARDS & STATS */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.stat-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:15px 18px;position:relative;overflow:hidden}
+.stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.stat-card.purple::before{background:var(--p)}.stat-card.blue::before{background:var(--blue)}
+.stat-card.red::before{background:var(--red)}.stat-card.amber::before{background:var(--amber)}
+.stat-card.green::before{background:var(--green)}
+.stat-val{font-size:28px;font-weight:900;color:var(--dark);line-height:1;font-variant-numeric:tabular-nums}
+.stat-lbl{font-size:10px;font-weight:700;color:var(--muted);margin-top:4px;text-transform:uppercase;letter-spacing:.05em}
+.stat-sub{font-size:10px;color:var(--muted);margin-top:2px}
+
+/* SECTION */
+.sec-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+.sec-title{font-size:14px;font-weight:700;color:var(--dark)}
+
+/* TABLE */
+.tbl-wrap{background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+table{width:100%;border-collapse:collapse;font-size:13px}
+thead tr{background:var(--bg)}
+th{padding:9px 14px;text-align:left;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);border-bottom:1px solid var(--line)}
+td{padding:10px 14px;color:var(--mid);border-bottom:1px solid var(--line);vertical-align:middle}
+tbody tr:last-child td{border-bottom:none}
+tbody tr{cursor:pointer;transition:.1s}
+tbody tr:hover td{background:var(--pbg)}
+
+/* BADGES */
+.badge{display:inline-flex;align-items:center;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+.b-new{background:#EFF6FF;color:#1D4ED8}.b-triage{background:#FFFBEB;color:#92400E}
+.b-analysis{background:var(--pbg);color:var(--pd)}.b-wait{background:#FFF7ED;color:#C2410C}
+.b-resolution{background:var(--pbg);color:var(--pd)}.b-resolved{background:#ECFDF5;color:#065F46}
+.b-closed{background:#F3F4F6;color:#374151}.b-reopened{background:#FEF2F2;color:#991B1B}
+.b-open{background:#EFF6FF;color:#1E40AF}.b-progress{background:var(--pbg);color:var(--pd)}
+.b-critical{background:#FEF2F2;color:#991B1B}.b-high{background:#FFF7ED;color:#C2410C}
+.b-medium{background:#FFFBEB;color:#92400E}.b-low{background:#ECFDF5;color:#065F46}
+.b-healthy{background:#ECFDF5;color:#065F46}.b-attention{background:#FFFBEB;color:#92400E}
+.b-risk{background:#FFF7ED;color:#C2410C}.b-critical2{background:#FEF2F2;color:#991B1B}
+.b-recovered{background:#EFF6FF;color:#1E40AF}
+.sla-ok{color:var(--green);font-size:12px;font-weight:600}
+.sla-warn{color:var(--amber);font-size:12px;font-weight:600}
+.sla-over{color:var(--red);font-size:12px;font-weight:600}
+.sla-done{color:var(--muted);font-size:12px;font-weight:600}
+
+/* MODAL / DRAWER */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:100;display:flex;align-items:flex-start;justify-content:center;padding:36px 16px;overflow-y:auto}
+.modal{background:#fff;border-radius:14px;width:100%;max-width:680px;padding:28px;box-shadow:0 24px 60px rgba(0,0,0,.2)}
+.modal-hdr{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+.modal-title{font-size:17px;font-weight:800;color:var(--dark)}
+.modal-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.close-btn{background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1;padding:2px 4px;border-radius:4px}
+.close-btn:hover{background:var(--bg);color:var(--dark)}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.form-field{display:flex;flex-direction:column;gap:4px}
+.form-field.span2{grid-column:span 2}
+.f-lbl{font-size:10px;font-weight:700;color:var(--mid);text-transform:uppercase;letter-spacing:.05em}
+.f-lbl span{color:var(--red)}
+.f-inp,.f-sel,.f-txt{padding:9px 11px;border:1px solid var(--line);border-radius:7px;font-size:13px;color:var(--ink);background:#fff;outline:none;transition:.15s;width:100%;box-sizing:border-box;font-family:inherit}
+.f-inp:focus,.f-sel:focus,.f-txt:focus{border-color:var(--p);box-shadow:0 0 0 3px rgba(109,64,230,.08)}
+.f-txt{resize:vertical;min-height:72px;line-height:1.5}
+.modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:20px;padding-top:18px;border-top:1px solid var(--line)}
+.drawer-overlay{position:fixed;inset:0;background:rgba(0,0,0,.42);z-index:200}
+.drawer{position:fixed;top:0;right:0;bottom:0;width:680px;max-width:100vw;background:#fff;z-index:201;overflow-y:auto;box-shadow:-8px 0 40px rgba(0,0,0,.15);display:flex;flex-direction:column}
+.drawer-hdr{padding:18px 22px;border-bottom:1px solid var(--line);flex-shrink:0}
+.drawer-id{font-size:10px;font-family:monospace;color:var(--muted);margin-bottom:3px}
+.drawer-title{font-size:18px;font-weight:800;color:var(--dark);margin-bottom:6px}
+.drawer-badges{display:flex;flex-wrap:wrap;gap:6px}
+.action-bar{padding:12px 22px;border-bottom:1px solid var(--line);background:var(--bg);display:flex;flex-wrap:wrap;gap:7px;flex-shrink:0}
+.drawer-body{padding:20px 22px;flex:1;display:flex;flex-direction:column;gap:16px}
+.detail-sec{background:var(--bg);border-radius:9px;padding:14px}
+.detail-sec-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
+.detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.d-item label{font-size:10px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px;text-transform:uppercase;letter-spacing:.04em}
+.d-item p{font-size:12px;color:var(--ink);line-height:1.5}
+.d-item.span2{grid-column:span 2}
+.inline-form{background:var(--pbg);border:1px solid var(--pb);border-radius:9px;padding:14px}
+.if-title{font-size:10px;font-weight:700;color:var(--pd);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+.tl-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--line)}
+.tl-item:last-child{border-bottom:none}
+.tl-dot{width:26px;height:26px;border-radius:50%;background:var(--pbg);border:2px solid var(--pb);display:grid;place-items:center;font-size:11px;flex-shrink:0;margin-top:1px}
+.tl-action{font-size:12px;font-weight:600;color:var(--dark)}
+.tl-meta{font-size:10px;color:var(--muted);margin-top:2px}
+.tl-note{font-size:12px;color:var(--mid);margin-top:5px;background:#fff;padding:7px 10px;border-radius:6px;border-left:3px solid var(--pb);line-height:1.5}
+.note-row{display:flex;gap:8px;margin-top:10px}
+.note-inp{flex:1;padding:9px 11px;border:1px solid var(--line);border-radius:7px;font-size:13px;outline:none;font-family:inherit;transition:.15s}
+.note-inp:focus{border-color:var(--p)}
+.empty-state{text-align:center;padding:40px 20px;color:var(--muted)}
+.empty-icon{font-size:36px;margin-bottom:10px}
+.empty-h{font-size:15px;font-weight:700;color:var(--dark);margin-bottom:6px}
+.empty-p{font-size:13px}
+.health-bar-meter{display:flex;align-items:center;gap:8px}
+.meter-bg{flex:1;background:var(--bg);border-radius:6px;height:8px;overflow:hidden}
+.meter-fill{height:100%;border-radius:6px;transition:width .4s ease}
+.kanban-wrap{display:flex;gap:14px;overflow-x:auto;padding-bottom:16px;min-height:480px}
+.kanban-col{flex-shrink:0;width:240px;display:flex;flex-direction:column}
+.kan-head{display:flex;align-items:center;justify-content:space-between;padding:9px 12px;background:#fff;border:1px solid var(--line);border-radius:"8px 8px 0 0"}
+.kan-cnt{background:var(--bg);color:var(--muted);font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px}
+.kan-cards{flex:1;border:1px solid var(--line);border-top:none;border-radius:0 0 8px 8px;padding:7px;background:#FAFAFA;display:flex;flex-direction:column;gap:7px;min-height:80px}
+.kan-card{background:#fff;border:1px solid var(--line);border-radius:7px;padding:10px;cursor:pointer;transition:.15s}
+.kan-card:hover{border-color:var(--pb);box-shadow:0 2px 8px rgba(109,64,230,.1)}
+.kan-id{font-size:9px;font-family:monospace;color:var(--muted);margin-bottom:4px}
+.kan-client{font-size:12px;font-weight:600;color:var(--dark);margin-bottom:3px}
+.kan-desc{font-size:11px;color:var(--muted);line-height:1.4;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:7px}
+.kan-foot{display:flex;align-items:center;justify-content:space-between}
+.filter-bar{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.f-search{flex:1;min-width:160px;padding:7px 11px;border:1px solid var(--line);border-radius:7px;font-size:13px;outline:none}
+.f-search:focus{border-color:var(--p)}
+.f-sel-sm{padding:7px 9px;border:1px solid var(--line);border-radius:7px;font-size:12px;background:#fff;outline:none}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.client-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:15px 16px;cursor:pointer;transition:.15s;border-left:4px solid transparent}
+.client-card:hover{box-shadow:0 4px 16px rgba(0,0,0,.07);transform:translateY(-1px)}
+.alert-card{background:#fff;border:1px solid var(--line);border-radius:0 9px 9px 0;padding:14px;margin-bottom:9px;border-left:4px solid}
+.alert-card-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:7px}
+.alert-cnt{color:#fff;font-size:11px;font-weight:800;padding:2px 8px;border-radius:20px}
+.chart-card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px}
+.chart-title{font-size:13px;font-weight:700;color:var(--dark);margin-bottom:12px}
+@media(max-width:768px){.sidebar{display:none}.form-grid{grid-template-columns:1fr}.form-field.span2{grid-column:span 1}.detail-grid{grid-template-columns:1fr}.d-item.span2{grid-column:span 1}.drawer{width:100vw}.stat-grid{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const {useState,useEffect,useCallback,useRef,useMemo} = React;
+const {AreaChart,Area,BarChart,Bar,PieChart,Pie,Cell,LineChart,Line,XAxis,YAxis,CartesianGrid,Tooltip,ResponsiveContainer} = Recharts;
+
+// ── API CLIENT ─────────────────────────────────────────────────
+// Auto-detect: empty base = relative URLs = works same-origin (Railway, etc.)
+const _getBase = () => { try { return localStorage.getItem('cso_base') || ''; } catch(e) { return ''; } };
+const _getToken = () => { try { return localStorage.getItem('cso_token') || ''; } catch(e) { return ''; } };
+const _state = { base: _getBase(), token: _getToken() };
+const api = async (path, method='GET', body=null) => {
+  const h = {'Content-Type':'application/json'};
+  if (_state.token) h['Authorization'] = 'Bearer '+_state.token;
+  const r = await fetch(_state.base+path, {method, headers:h, body:body?JSON.stringify(body):undefined});
+  const t = await r.text();
+  let d; try{d=JSON.parse(t);}catch{d=t;}
+  if (!r.ok) throw {status:r.status,...(typeof d==='object'?d:{message:t})};
+  return d;
+};
+
+// ── CONSTANTS ──────────────────────────────────────────────────
+const STATUS_T = {new:'Novo',in_triage:'Em triagem',awaiting_info:'Aguard. info.',in_technical_analysis:'Análise técnica',awaiting_cd_ops:'Aguard. CD',awaiting_supplier:'Aguard. fornecedor',awaiting_fiscal:'Aguard. fiscal',in_resolution:'Em solução',awaiting_client_validation:'Aguard. cliente',resolved:'Resolvido',closed:'Encerrado',reopened:'Reaberto'};
+const STATUS_C = {open:'Aberta',in_progress:'Em andamento',awaiting_client:'Aguard. cliente',resolved:'Resolvida',closed:'Encerrada',cancelled:'Cancelada'};
+const STATUS_R = {return_requested:'Solicitada',under_review:'Em análise',awaiting_approval:'Aguard. aprovação',approved:'Aprovada',rejected:'Reprovada',awaiting_customer_shipment:'Aguard. envio',in_transit:'Em trânsito',received:'Recebida',under_inspection:'Inspeção',awaiting_fiscal:'Aguard. fiscal',awaiting_credit:'Aguard. crédito',credit_pending:'Aguard. crédito',replacement_pending:'Aguard. reposição',refund_pending:'Aguard. reembolso',replacement_sent:'Reposição enviada',closed:'Encerrada',cancelled:'Cancelada'};
+const STATUS_RMA = {requested:'Solicitado',under_analysis:'Em análise',awaiting_shipment:'Aguard. envio',in_transit:'Em trânsito',received:'Recebido',technical_analysis:'Análise técnica',awaiting_decision:'Aguard. decisão',approved:'Aprovado',repair:'Em reparo',replacement:'Reposição',rejected:'Reprovado',closed:'Encerrado'};
+const HEALTH = {healthy:'Saudável',attention:'Atenção',at_risk:'Em risco',critical:'Crítico',recovered:'Recuperado'};
+const HCOLOR = {healthy:'#10B981',attention:'#F59E0B',at_risk:'#F97316',critical:'#EF4444',recovered:'#3B82F6'};
+const CRIT = {critical:'Crítica',high:'Alta',medium:'Média',low:'Baixa'};
+const CRITP = {critical:'red',high:'amber',medium:'amber',low:'green'};
+const fd = d => d?new Date(d).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'}):'—';
+const fdt = d => d?new Date(d).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'—';
+const money = v => v>0?'R$ '+Number(v).toLocaleString('pt-BR',{minimumFractionDigits:0}):'—';
+
+// ── SHARED COMPONENTS ──────────────────────────────────────────
+function Toast({toasts}) {
+  return <div className="toasts">{toasts.map(t=><div key={t.id} className={`toast ${t.type}`}>{t.msg}</div>)}</div>;
+}
+function useToast() {
+  const [toasts,setToasts] = useState([]);
+  const toast = useCallback((msg,type='info') => {
+    const id = Date.now();
+    setToasts(t=>[...t,{id,msg,type}]);
+    setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),4500);
+  },[]);
+  return {toast,toasts};
+}
+function Badge({label,cls}) { return <span className={`badge b-${cls}`}>{label}</span>; }
+function StatusBadge({status,map,prefix='b'}) {
+  const label = map[status]||status;
+  const cls = {new:'new',in_triage:'triage',awaiting_info:'wait',in_technical_analysis:'analysis',awaiting_cd_ops:'wait',awaiting_supplier:'wait',awaiting_fiscal:'wait',in_resolution:'resolution',awaiting_client_validation:'wait',resolved:'resolved',closed:'closed',reopened:'reopened',open:'open',in_progress:'progress',awaiting_client:'triage',cancelled:'closed',return_requested:'new',under_review:'triage',awaiting_approval:'wait',approved:'resolved',rejected:'reopened',in_transit:'analysis',received:'triage',technical_analysis:'analysis',awaiting_decision:'wait',repair:'analysis',replacement:'resolved'}[status]||'closed';
+  return <span className={`badge b-${cls}`}>{label}</span>;
+}
+function CritBadge({c}) { return <span className={`badge b-${CRITP[c]||'medium'}`}>{CRIT[c]||c}</span>; }
+function HealthBadge({status,score}) {
+  return <span style={{display:'inline-flex',alignItems:'center',gap:5}}>
+    <span style={{width:8,height:8,borderRadius:'50%',background:HCOLOR[status],display:'inline-block'}}/>
+    <span style={{fontSize:12,fontWeight:700,color:HCOLOR[status]}}>{HEALTH[status]||status}{score!==undefined&&` (${score})`}</span>
+  </span>;
+}
+function SlaTag({s}) {
+  if(!s||s==='done'||s==='paused') return <span className="sla-done">—</span>;
+  if(s==='overdue') return <span className="sla-over">🔴 Vencido</span>;
+  if(s==='warn')    return <span className="sla-warn">⚠ Atenção</span>;
+  return <span className="sla-ok">✓ Em dia</span>;
+}
+function Btn({children,onClick,v='outline',s='',disabled,loading}) {
+  return <button className={`btn btn-${v} ${s}`} onClick={onClick} disabled={disabled||loading}>
+    {loading&&<span className="spinner sm white" style={{marginRight:4}}/>}{children}
+  </button>;
+}
+function KPI({val,label,sub,accent='purple'}) {
+  return <div className={`stat-card ${accent}`}>
+    <div className="stat-val">{val}</div>
+    <div className="stat-lbl">{label}</div>
+    {sub&&<div className="stat-sub">{sub}</div>}
+  </div>;
+}
+function Loading({text='Carregando...'}) { return <div className="loading-full"><span className="spinner md"/>{text}</div>; }
+function Empty({icon='📋',title,desc}) { return <div className="empty-state"><div className="empty-icon">{icon}</div><div className="empty-h">{title}</div>{desc&&<div className="empty-p">{desc}</div>}</div>; }
+function FField({label,req,span2,children}) {
+  return <div className={`form-field${span2?' span2':''}`}>
+    <label className="f-lbl">{label}{req&&<span> *</span>}</label>
+    {children}
+  </div>;
+}
+function Drawer({title,id,badges,onClose,actionBar,children}) {
+  return <>
+    <div className="drawer-overlay" onClick={onClose}/>
+    <div className="drawer">
+      <div className="drawer-hdr">
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between'}}>
+          <div style={{flex:1}}>
+            {id&&<div className="drawer-id">{id}</div>}
+            <div className="drawer-title">{title}</div>
+            {badges&&<div className="drawer-badges">{badges}</div>}
+          </div>
+          <button className="close-btn" onClick={onClose} style={{fontSize:26,marginTop:-2}}>×</button>
+        </div>
+      </div>
+      {actionBar&&<div className="action-bar">{actionBar}</div>}
+      <div className="drawer-body">{children}</div>
+    </div>
+  </>;
+}
+function DetailSec({title,editBtn,children}) {
+  return <div className="detail-sec">
+    <div className="detail-sec-title">{title}{editBtn}</div>
+    {children}
+  </div>;
+}
+function Timeline({items}) {
+  if(!items?.length) return <div style={{fontSize:12,color:'var(--muted)',fontStyle:'italic'}}>Sem histórico</div>;
+  return <div>{[...items].reverse().map((h,i)=>(
+    <div key={i} className="tl-item">
+      <div className="tl-dot">{h.action?.includes('nota')?'💬':h.action?.includes('status')||h.action?.includes('→')?'🔄':h.action?.includes('criado')||h.action?.includes('created')?'📋':'✏'}</div>
+      <div style={{flex:1}}>
+        <div className="tl-action">{h.action}</div>
+        <div className="tl-meta">{h.user_name&&<strong>{h.user_name} · </strong>}{fdt(h.created_at)}</div>
+        {h.note&&h.note!==h.action&&<div className="tl-note">{h.note}</div>}
+      </div>
+    </div>
+  ))}</div>;
+}
+
+// ── TICKETS MODULE ─────────────────────────────────────────────
+const STATUS_NEXT = {new:['in_triage'],in_triage:['awaiting_info','in_technical_analysis'],awaiting_info:['in_technical_analysis'],in_technical_analysis:['in_resolution','awaiting_cd_ops','awaiting_supplier','awaiting_fiscal'],awaiting_cd_ops:['in_resolution'],awaiting_supplier:['in_resolution'],awaiting_fiscal:['in_resolution'],in_resolution:['awaiting_client_validation','resolved'],awaiting_client_validation:['resolved'],resolved:['closed'],reopened:['in_triage']};
+const RC_OPT = [{v:'commercial_error',l:'Erro comercial'},{v:'manufacturing_defect',l:'Defeito de fabricação'},{v:'picking_error',l:'Erro de separação'},{v:'transport_damage',l:'Dano no transporte'},{v:'misuse',l:'Mau uso'},{v:'supplier_failure',l:'Falha do fornecedor'},{v:'no_process',l:'Sem processo'},{v:'communication_failure',l:'Falha de comunicação'},{v:'other',l:'Outro'}];
+const AREA_OPT = [{v:'support',l:'Suporte'},{v:'rma',l:'RMA'},{v:'operations',l:'Operações'},{v:'purchasing',l:'Compras'},{v:'warehouse',l:'CD'},{v:'fiscal',l:'Fiscal'},{v:'cso',l:'CSO'}];
+
+function TicketDetail({ticket:init,user,onClose,onUpdate,toast}) {
+  const [ticket,setTicket] = useState(init);
+  const [history,setHistory] = useState([]);
+  const [note,setNote] = useState('');
+  const [editRC,setEditRC] = useState(false);
+  const [editRes,setEditRes] = useState(false);
+  const [rcForm,setRcForm] = useState({root_cause_category:init.root_cause_category||'',root_cause_description:init.root_cause_description||''});
+  const [resForm,setResForm] = useState({resolution:init.resolution||''});
+  const [busy,setBusy] = useState('');
+
+  useEffect(()=>{
+    api('/api/v1/tickets/'+ticket.id+'/history').then(d=>setHistory(Array.isArray(d)?d:(d.data||[]))).catch(()=>{});
+  },[ticket.id]);
+
+  const doStatus = async s => {
+    setBusy('s_'+s);
+    try { const u=await api('/api/v1/tickets/'+ticket.id+'/status','PATCH',{status:s}); setTicket(u); onUpdate(u); toast('→ '+STATUS_T[s],'success'); } 
+    catch(e) { toast(e.message||e.error||'Erro ao avançar status','error'); }
+    finally { setBusy(''); }
+  };
+  const doApprove = async () => {
+    setBusy('approve');
+    try { const u=await api('/api/v1/tickets/'+ticket.id+'/approve','PATCH',{result:'approved',comment:'Aprovado'}); setTicket(u); onUpdate(u); toast('✓ Chancelado','success'); }
+    catch(e) { toast(e.message||'Erro','error'); }
+    finally { setBusy(''); }
+  };
+  const doReopen = async () => {
+    setBusy('reopen');
+    try { const u=await api('/api/v1/tickets/'+ticket.id+'/reopen','POST',{}); setTicket(u); onUpdate(u); toast('Reaberto','info'); }
+    catch(e) { toast(e.message||'Erro','error'); }
+    finally { setBusy(''); }
+  };
+  const doPatch = async (data,label) => {
+    setBusy('patch');
+    try { const u=await api('/api/v1/tickets/'+ticket.id,'PATCH',data); setTicket(u); onUpdate(u); toast(label+' salvo ✓','success'); setEditRC(false); setEditRes(false); }
+    catch(e) { toast(e.message||'Erro','error'); }
+    finally { setBusy(''); }
+  };
+  const doNote = async () => {
+    if(!note.trim()) return;
+    setBusy('note');
+    try { await api('/api/v1/tickets/'+ticket.id+'/notes','POST',{note:note.trim()}); setNote(''); toast('Nota adicionada ✓','success'); const h=await api('/api/v1/tickets/'+ticket.id+'/history'); setHistory(Array.isArray(h)?h:(h.data||[])); }
+    catch(e) { toast(e.message||'Erro','error'); }
+    finally { setBusy(''); }
+  };
+
+  const nexts = STATUS_NEXT[ticket.status]||[];
+  const canApprove = ['admin','cso','board'].includes(user?.role);
+
+  return <Drawer
+    title={ticket.client_name}
+    id={`${ticket.id} · ${ticket.business_unit_id?.toUpperCase()}`}
+    badges={<><StatusBadge status={ticket.status} map={STATUS_T}/> <CritBadge c={ticket.criticality}/> {ticket.is_vip&&<Badge label="⭐ VIP" cls="amber"/>} {ticket.is_recurrence&&<Badge label="↩ Recorrência" cls="reopened"/>} <SlaTag s={ticket.sla_state}/></>}
+    onClose={onClose}
+    actionBar={<>
+      {nexts.filter(s=>s!=='closed').map(s=><Btn key={s} v="outline" s="btn-sm" loading={busy==='s_'+s} disabled={!!busy} onClick={()=>doStatus(s)}>→ {STATUS_T[s]}</Btn>)}
+      {ticket.status==='resolved'&&canApprove&&ticket.approval_status!=='approved'&&<Btn v="success" s="btn-sm" loading={busy==='approve'} disabled={!!busy} onClick={doApprove}>✓ Chancelar</Btn>}
+      {ticket.status==='resolved'&&<Btn v="outline" s="btn-sm" loading={busy==='s_closed'} disabled={!!busy} onClick={()=>doStatus('closed')}>→ Encerrar</Btn>}
+      {['closed','resolved'].includes(ticket.status)&&<Btn v="danger" s="btn-sm" loading={busy==='reopen'} disabled={!!busy} onClick={doReopen}>↩ Reabrir</Btn>}
+    </>}
+  >
+    <DetailSec title="Informações">
+      {ticket.revenue_at_risk>0&&<p style={{fontSize:13,fontWeight:700,color:'var(--red)',marginBottom:8}}>⚠ Receita em risco: {money(ticket.revenue_at_risk)}</p>}
+      <div className="detail-grid">
+        {[['Canal',ticket.channel],['Tipo',ticket.occurrence_type],['Área',ticket.area_responsible],['Aprovação',ticket.approval_status==='approved'?'✓ Aprovado':'Pendente'],['Reaberturas',ticket.reopen_count+'×'],['Criado',fd(ticket.created_at)]].map(([k,v])=><div key={k} className="d-item"><label>{k}</label><p>{v||'—'}</p></div>)}
+        <div className="d-item span2"><label>Descrição</label><p style={{lineHeight:1.6}}>{ticket.description}</p></div>
+      </div>
+    </DetailSec>
+
+    <DetailSec title="Causa Raiz" editBtn={!editRC&&<Btn v="outline" s="btn-xs" onClick={()=>setEditRC(true)}>✏</Btn>}>
+      {editRC?<div className="inline-form">
+        <div className="if-title">📋 Registrar Causa Raiz</div>
+        <div style={{display:'flex',flexDirection:'column',gap:10}}>
+          <FField label="Categoria"><select className="f-sel" value={rcForm.root_cause_category} onChange={e=>setRcForm(f=>({...f,root_cause_category:e.target.value}))}><option value="">Selecionar...</option>{RC_OPT.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select></FField>
+          <FField label="Descrição"><textarea className="f-txt" rows={3} value={rcForm.root_cause_description} onChange={e=>setRcForm(f=>({...f,root_cause_description:e.target.value}))} placeholder="Descreva a causa raiz..."/></FField>
+          <div style={{display:'flex',gap:8}}><Btn v="purple" s="btn-sm" loading={busy==='patch'} onClick={()=>doPatch(rcForm,'Causa raiz')}>✓ Salvar</Btn><Btn v="outline" s="btn-sm" onClick={()=>setEditRC(false)}>Cancelar</Btn></div>
+        </div>
+      </div>:<div className="detail-grid">
+        <div className="d-item"><label>Categoria</label><p>{RC_OPT.find(o=>o.v===ticket.root_cause_category)?.l||ticket.root_cause_category||<em style={{color:'var(--muted)'}}>Não preenchido</em>}</p></div>
+        <div className="d-item span2"><label>Descrição</label><p style={{lineHeight:1.6}}>{ticket.root_cause_description||<em style={{color:'var(--muted)'}}>Não preenchido</em>}</p></div>
+      </div>}
+    </DetailSec>
+
+    <DetailSec title="Resolução" editBtn={!editRes&&<Btn v="outline" s="btn-xs" onClick={()=>setEditRes(true)}>✏</Btn>}>
+      {editRes?<div className="inline-form">
+        <div className="if-title">✅ Registrar Resolução</div>
+        <textarea className="f-txt" rows={4} value={resForm.resolution} onChange={e=>setResForm({resolution:e.target.value})} placeholder="Descreva o que foi feito..."/>
+        <div style={{display:'flex',gap:8,marginTop:10}}><Btn v="purple" s="btn-sm" loading={busy==='patch'} onClick={()=>doPatch(resForm,'Resolução')}>✓ Salvar</Btn><Btn v="outline" s="btn-sm" onClick={()=>setEditRes(false)}>Cancelar</Btn></div>
+      </div>:<p style={{fontSize:13,color:ticket.resolution?'var(--mid)':'var(--muted)',fontStyle:ticket.resolution?'normal':'italic',lineHeight:1.6}}>{ticket.resolution||'Não preenchido'}</p>}
+    </DetailSec>
+
+    <DetailSec title="Notas & Histórico">
+      <Timeline items={history}/>
+      <div className="note-row">
+        <input className="note-inp" value={note} onChange={e=>setNote(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&doNote()} placeholder="Adicionar nota interna... (Enter)"/>
+        <Btn v="purple" s="btn-sm" loading={busy==='note'} disabled={!note.trim()} onClick={doNote}>Enviar</Btn>
+      </div>
+    </DetailSec>
+  </Drawer>;
+}
+
+function CreateTicketModal({onClose,onCreated,toast}) {
+  const [f,setF] = useState({business_unit_id:'led',client_name:'',channel:'whatsapp',occurrence_type:'technical_support',criticality:'high',area_responsible:'support',description:'',order_number:'',order_value:'',revenue_at_risk:'',is_vip:false,is_recurrence:false});
+  const [busy,setBusy] = useState(false);
+  const set = (k,v) => setF(p=>({...p,[k]:v}));
+  const submit = async e => {
+    e.preventDefault();
+    if(!f.client_name.trim()) return toast('Nome do cliente obrigatório','error');
+    if(!f.description.trim()||f.description.length<10) return toast('Descrição mínima de 10 caracteres','error');
+    setBusy(true);
+    try {
+      const p={...f};
+      if(p.order_value) p.order_value=parseFloat(p.order_value);
+      if(p.revenue_at_risk) p.revenue_at_risk=parseFloat(p.revenue_at_risk);
+      const t=await api('/api/v1/tickets','POST',p);
+      toast('Chamado '+t.id+' aberto!','success'); onCreated(t);
+    } catch(e) { toast(e.message||'Erro ao criar chamado','error'); }
+    finally { setBusy(false); }
+  };
+  return <div className="overlay" onClick={e=>e.target===e.currentTarget&&onClose()}>
+    <div className="modal">
+      <div className="modal-hdr"><div><div className="modal-title">Abrir Chamado</div><div className="modal-sub">Registrar nova ocorrência</div></div><button className="close-btn" onClick={onClose}>×</button></div>
+      <form onSubmit={submit}>
+        <div className="form-grid">
+          <FField label="BU" req><select className="f-sel" value={f.business_unit_id} onChange={e=>set('business_unit_id',e.target.value)}><option value="led">LED / PRO AV</option><option value="av">Áudio e Vídeo</option><option value="seg">Segurança</option><option value="cab">Cabeamento</option></select></FField>
+          <FField label="Canal" req><select className="f-sel" value={f.channel} onChange={e=>set('channel',e.target.value)}><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option><option value="phone">Telefone</option><option value="sales">Comercial</option><option value="portal">Portal</option></select></FField>
+          <FField label="Cliente" req span2><input className="f-inp" value={f.client_name} onChange={e=>set('client_name',e.target.value)} placeholder="Nome do cliente"/></FField>
+          <FField label="Criticidade"><select className="f-sel" value={f.criticality} onChange={e=>set('criticality',e.target.value)}>{Object.entries(CRIT).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select></FField>
+          <FField label="Área Responsável"><select className="f-sel" value={f.area_responsible} onChange={e=>set('area_responsible',e.target.value)}>{AREA_OPT.map(o=><option key={o.v} value={o.v}>{o.l}</option>)}</select></FField>
+          <FField label="Nº Pedido"><input className="f-inp" value={f.order_number} onChange={e=>set('order_number',e.target.value)} placeholder="Opcional"/></FField>
+          <FField label="Receita em Risco (R$)"><input className="f-inp" type="number" value={f.revenue_at_risk} onChange={e=>set('revenue_at_risk',e.target.value)} placeholder="0"/></FField>
+          <FField label="Descrição" req span2><textarea className="f-txt" rows={4} value={f.description} onChange={e=>set('description',e.target.value)} placeholder="Descreva a ocorrência com clareza (mín. 10 caracteres)..."/></FField>
+          <div className="form-field span2" style={{flexDirection:'row',gap:20}}><label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,color:'var(--mid)',cursor:'pointer'}}><input type="checkbox" checked={f.is_vip} onChange={e=>set('is_vip',e.target.checked)}/> Cliente VIP</label><label style={{display:'flex',alignItems:'center',gap:7,fontSize:13,color:'var(--mid)',cursor:'pointer'}}><input type="checkbox" checked={f.is_recurrence} onChange={e=>set('is_recurrence',e.target.checked)}/> Recorrência</label></div>
+        </div>
+        <div className="modal-footer"><Btn v="outline" onClick={onClose}>Cancelar</Btn><Btn v="purple" loading={busy} onClick={submit}>✓ Abrir Chamado</Btn></div>
+      </form>
+    </div>
+  </div>;
+}
+
+function TicketsModule({user,toast}) {
+  const [view,setView] = useState('list');
+  const [tickets,setTickets] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  const [showCreate,setShowCreate] = useState(false);
+  const [q,setQ] = useState('');
+  const [fs,setFs] = useState('');
+  const [fc,setFc] = useState('');
+
+  const load = async() => { setLoading(true); try{ const d=await api('/api/v1/tickets'); setTickets(Array.isArray(d)?d:(d.data||[])); }catch(e){ toast(e.message||'Erro','error'); } finally{ setLoading(false); } };
+  useEffect(()=>{ load(); },[]);
+
+  const filtered = useMemo(()=>tickets.filter(t=>(!q||t.client_name?.toLowerCase().includes(q.toLowerCase())||t.id?.toLowerCase().includes(q.toLowerCase()))&&(!fs||t.status===fs)&&(!fc||t.criticality===fc)),[tickets,q,fs,fc]);
+
+  const KCOLS = [{id:'new',label:'Novo',statuses:['new'],c:'var(--blue)'},{id:'triage',label:'Triagem',statuses:['in_triage','reopened'],c:'var(--amber)'},{id:'analysis',label:'Análise / Espera',statuses:['awaiting_info','in_technical_analysis','awaiting_cd_ops','awaiting_supplier','awaiting_fiscal'],c:'var(--p)'},{id:'resolution',label:'Em Solução',statuses:['in_resolution','awaiting_client_validation'],c:'#8B5CF6'},{id:'resolved',label:'Resolvido',statuses:['resolved'],c:'var(--green)'},{id:'closed',label:'Encerrado',statuses:['closed'],c:'var(--muted)'}];
+
+  return <div>
+    <div className="sec-hdr">
+      <div style={{display:'flex',gap:4}}>
+        {['list','kanban'].map(v=><button key={v} onClick={()=>setView(v)} style={{padding:'6px 14px',borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${view===v?'var(--p)':'var(--line)'}`,background:view===v?'var(--pbg)':'#fff',color:view===v?'var(--p)':'var(--mid)',cursor:'pointer'}}>{v==='list'?'Lista':'Kanban'}</button>)}
+      </div>
+      <div style={{display:'flex',gap:8}}><Btn v="outline" s="btn-sm" onClick={load}>↻</Btn><Btn v="purple" s="btn-sm" onClick={()=>setShowCreate(true)}>+ Novo Chamado</Btn></div>
+    </div>
+
+    <div className="filter-bar">
+      <input className="f-search" value={q} onChange={e=>setQ(e.target.value)} placeholder="Buscar..."/>
+      <select className="f-sel-sm" value={fs} onChange={e=>setFs(e.target.value)}><option value="">Todos status</option>{Object.entries(STATUS_T).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+      <select className="f-sel-sm" value={fc} onChange={e=>setFc(e.target.value)}><option value="">Todas crit.</option>{Object.entries(CRIT).map(([v,l])=><option key={v} value={v}>{l}</option>)}</select>
+    </div>
+
+    {loading?<Loading/>:view==='list'?(
+      <div className="tbl-wrap">
+        {!filtered.length?<Empty icon="🎫" title="Nenhum chamado" desc="Crie o primeiro chamado para começar."/>:
+        <table><thead><tr><th>ID</th><th>Cliente</th><th>Status</th><th>Crit.</th><th>SLA</th><th>Área</th><th>Risco (R$)</th><th>Criado</th></tr></thead>
+        <tbody>{filtered.map(t=><tr key={t.id} onClick={()=>setSelected(t)}>
+          <td><span style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)',fontWeight:600}}>{t.id}</span></td>
+          <td><div style={{fontWeight:600,color:'var(--dark)'}}>{t.client_name}{t.is_vip?' ⭐':''}</div></td>
+          <td><StatusBadge status={t.status} map={STATUS_T}/></td>
+          <td><CritBadge c={t.criticality}/></td>
+          <td><SlaTag s={t.sla_state}/></td>
+          <td style={{fontSize:12}}>{t.area_responsible}</td>
+          <td style={{fontSize:12,fontWeight:t.revenue_at_risk>0?600:400,color:t.revenue_at_risk>0?'var(--red)':'var(--muted)'}}>{money(t.revenue_at_risk)}</td>
+          <td style={{fontSize:11,color:'var(--muted)'}}>{fd(t.created_at)}</td>
+        </tr>)}</tbody></table>}
+      </div>
+    ):(
+      <div className="kanban-wrap">
+        {KCOLS.map(col=>{
+          const cards=tickets.filter(t=>col.statuses.includes(t.status));
+          return <div key={col.id} className="kanban-col">
+            <div className="kan-head" style={{borderBottom:`3px solid ${col.c}`}}>
+              <span style={{fontSize:11,fontWeight:700,color:'var(--dark)',textTransform:'uppercase',letterSpacing:'.05em'}}>{col.label}</span>
+              <span className="kan-cnt">{cards.length}</span>
+            </div>
+            <div className="kan-cards">
+              {!cards.length&&<div style={{textAlign:'center',padding:'16px 0',fontSize:11,color:'var(--muted)'}}>Vazio</div>}
+              {cards.map(t=><div key={t.id} className="kan-card" onClick={()=>setSelected(t)}>
+                <div className="kan-id">{t.id}</div>
+                <div className="kan-client">{t.client_name}{t.is_vip?' ⭐':''}</div>
+                <div className="kan-desc">{t.description}</div>
+                <div className="kan-foot"><CritBadge c={t.criticality}/><SlaTag s={t.sla_state}/></div>
+              </div>)}
+            </div>
+          </div>;
+        })}
+      </div>
+    )}
+
+    {showCreate&&<CreateTicketModal onClose={()=>setShowCreate(false)} onCreated={t=>{setTickets(ts=>[t,...ts]);setShowCreate(false);setSelected(t);}} toast={toast}/>}
+    {selected&&<TicketDetail ticket={selected} user={user} onClose={()=>setSelected(null)} onUpdate={u=>setTickets(ts=>ts.map(t=>t.id===u.id?u:t))} toast={toast}/>}
+  </div>;
+}
+
+// ── COMPLAINTS MODULE ──────────────────────────────────────────
+function ComplaintsModule({toast}) {
+  const [items,setItems] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  const FEEL = {very_upset:'😡 Muito insatisfeito',upset:'😕 Insatisfeito',neutral:'😐 Neutro',satisfied:'😊 Satisfeito',very_satisfied:'😄 Muito satisfeito'};
+  const PROC = {valid:'Procedente',partially_valid:'Parcial.',invalid:'Improcedente',under_analysis:'Em análise'};
+  useEffect(()=>{ api('/api/v1/complaints').then(d=>setItems(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+
+  return <div>
+    <div className="sec-hdr"><span className="sec-title">Reclamações ({items.length})</span><Btn v="purple" s="btn-sm" onClick={()=>toast('Formulário em breve — use a API POST /api/v1/complaints','info')}>+ Nova Reclamação</Btn></div>
+    {loading?<Loading/>:<div className="tbl-wrap">
+      {!items.length?<Empty icon="⚠️" title="Nenhuma reclamação"/>:
+      <table><thead><tr><th>ID</th><th>Cliente</th><th>Tipo</th><th>Gravidade</th><th>Status</th><th>Procedência</th><th>Risco</th><th>Data</th></tr></thead>
+      <tbody>{items.map(r=><tr key={r.id} onClick={()=>setSelected(r)}>
+        <td><span style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)',fontWeight:600}}>REC-{String(r.id).padStart(3,'0')}</span></td>
+        <td><div style={{fontWeight:600,color:'var(--dark)'}}>{r.client_name||'-'}</div></td>
+        <td style={{fontSize:12}}>{r.type_key}</td>
+        <td><CritBadge c={r.severity}/></td>
+        <td><StatusBadge status={r.status} map={STATUS_C}/></td>
+        <td style={{fontSize:12}}>{PROC[r.procedence]||r.procedence}</td>
+        <td style={{fontSize:12,fontWeight:r.loss_risk>0?600:400,color:r.loss_risk>0?'var(--red)':'var(--muted)'}}>{money(r.loss_risk)}</td>
+        <td style={{fontSize:11,color:'var(--muted)'}}>{fd(r.created_at)}</td>
+      </tr>)}</tbody></table>}
+    </div>}
+    {selected&&<Drawer title={selected.client_name||'Reclamação'} id={`REC-${String(selected.id).padStart(3,'0')}`}
+      badges={<><CritBadge c={selected.severity}/><StatusBadge status={selected.status} map={STATUS_C}/><span style={{fontSize:12,color:'var(--muted)'}}>{PROC[selected.procedence]}</span></>}
+      onClose={()=>setSelected(null)}>
+      {selected.loss_risk>0&&<p style={{fontSize:13,fontWeight:700,color:'var(--red)'}}>⚠ Risco de perda: {money(selected.loss_risk)}</p>}
+      <DetailSec title="Detalhes">
+        <div className="detail-grid">
+          {[['Tipo',selected.type_key],['Sentimento',FEEL[selected.client_feeling]||selected.client_feeling||'—'],['Área causadora',selected.causing_area||selected.responsible_area],['Canal',selected.channel||'—'],['Data',fd(selected.created_at)],['Procedência',PROC[selected.procedence]]].map(([k,v])=><div key={k} className="d-item"><label>{k}</label><p>{v||'—'}</p></div>)}
+          <div className="d-item span2"><label>Descrição</label><p style={{lineHeight:1.6}}>{selected.reason}</p></div>
+          {selected.resolution&&<div className="d-item span2"><label>Resolução</label><p style={{lineHeight:1.6}}>{selected.resolution}</p></div>}
+        </div>
+      </DetailSec>
+    </Drawer>}
+  </div>;
+}
+
+// ── RETURNS MODULE ─────────────────────────────────────────────
+function ReturnsModule({toast}) {
+  const [items,setItems] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  useEffect(()=>{ api('/api/v1/returns').then(d=>setItems(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+
+  return <div>
+    <div className="sec-hdr"><span className="sec-title">Devoluções ({items.length})</span><Btn v="purple" s="btn-sm" onClick={()=>toast('Use POST /api/v1/returns','info')}>+ Nova Devolução</Btn></div>
+    {loading?<Loading/>:<div className="tbl-wrap">
+      {!items.length?<Empty icon="↩" title="Nenhuma devolução"/>:
+      <table><thead><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>Pedido</th><th>Status</th><th>Motivo</th><th>Valor</th><th>Data</th></tr></thead>
+      <tbody>{items.map(r=><tr key={r.id} onClick={()=>setSelected(r)}>
+        <td><span style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)',fontWeight:600}}>DEV-{String(r.id).padStart(3,'0')}</span></td>
+        <td style={{fontWeight:600,color:'var(--dark)'}}>{r.client_name||'-'}</td>
+        <td style={{fontSize:12}}>{r.product_name_snap||'-'}</td>
+        <td style={{fontSize:12}}>{r.order_number||'—'}</td>
+        <td><StatusBadge status={r.status} map={STATUS_R}/></td>
+        <td style={{fontSize:12,maxWidth:160,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.reason}</td>
+        <td style={{fontSize:12,fontWeight:600}}>{money(r.total_value)}</td>
+        <td style={{fontSize:11,color:'var(--muted)'}}>{fd(r.created_at)}</td>
+      </tr>)}</tbody></table>}
+    </div>}
+    {selected&&<Drawer title={selected.client_name||'Devolução'} id={`DEV-${String(selected.id).padStart(3,'0')}`}
+      badges={<><StatusBadge status={selected.status} map={STATUS_R}/></>}
+      onClose={()=>setSelected(null)}>
+      <DetailSec title="Detalhes">
+        <div className="detail-grid">
+          {[['Produto',selected.product_name_snap||'—'],['Pedido',selected.order_number||'—'],['Quantidade',selected.quantity],['Valor',money(selected.total_value)],['Decisão',selected.decision||'—'],['Criada',fd(selected.created_at)]].map(([k,v])=><div key={k} className="d-item"><label>{k}</label><p>{v||'—'}</p></div>)}
+          <div className="d-item span2"><label>Motivo</label><p style={{lineHeight:1.6}}>{selected.reason}</p></div>
+          {selected.reject_reason&&<div className="d-item span2"><label>Motivo da Rejeição</label><p style={{lineHeight:1.6,color:'var(--red)'}}>{selected.reject_reason}</p></div>}
+        </div>
+      </DetailSec>
+    </Drawer>}
+  </div>;
+}
+
+// ── RMA MODULE ─────────────────────────────────────────────────
+function RMAModule({toast}) {
+  const [items,setItems] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  useEffect(()=>{ api('/api/v1/rma').then(d=>setItems(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+
+  return <div>
+    <div className="sec-hdr"><span className="sec-title">RMA — Retorno Técnico ({items.length})</span><Btn v="purple" s="btn-sm" onClick={()=>toast('Use POST /api/v1/rma','info')}>+ Novo RMA</Btn></div>
+    {loading?<Loading/>:<div className="tbl-wrap">
+      {!items.length?<Empty icon="🔧" title="Nenhum RMA"/>:
+      <table><thead><tr><th>ID</th><th>Cliente</th><th>Produto</th><th>S/N</th><th>Status</th><th>Defeito</th><th>Garantia</th><th>Aberto</th></tr></thead>
+      <tbody>{items.map(r=><tr key={r.id} onClick={()=>setSelected(r)}>
+        <td><span style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)',fontWeight:600}}>RMA-{String(r.id).padStart(3,'0')}</span></td>
+        <td style={{fontWeight:600,color:'var(--dark)'}}>{r.client_name||'-'}</td>
+        <td style={{fontSize:12}}>{r.product_name}</td>
+        <td style={{fontFamily:'monospace',fontSize:10}}>{r.serial_number||'—'}</td>
+        <td><StatusBadge status={r.status} map={STATUS_RMA}/></td>
+        <td style={{fontSize:12,maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.defect_description}</td>
+        <td><span className={`badge ${r.warranty?'b-resolved':'b-reopened'}`}>{r.warranty?'Em garantia':'Fora'}</span></td>
+        <td style={{fontSize:11,color:'var(--muted)'}}>{fd(r.created_at)}</td>
+      </tr>)}</tbody></table>}
+    </div>}
+    {selected&&<Drawer title={selected.client_name||'RMA'} id={`RMA-${String(selected.id).padStart(3,'0')}`}
+      badges={<><StatusBadge status={selected.status} map={STATUS_RMA}/><span className={`badge ${selected.warranty?'b-resolved':'b-reopened'}`}>{selected.warranty?'Em garantia':'Fora'}</span></>}
+      onClose={()=>setSelected(null)}>
+      <DetailSec title="Detalhes Técnicos">
+        <div className="detail-grid">
+          {[['Produto',selected.product_name],['Nº de Série',selected.serial_number||'—'],['Defeito',selected.defect_description],['Decisão',selected.rma_decision_v1||selected.decision||'—'],['Aberto',fd(selected.created_at)],['Encerrado',fd(selected.closed_at)]].map(([k,v])=><div key={k} className="d-item"><label>{k}</label><p>{v||'—'}</p></div>)}
+          {selected.technical_notes&&<div className="d-item span2"><label>Notas Técnicas</label><p style={{lineHeight:1.6}}>{selected.technical_notes}</p></div>}
+        </div>
+      </DetailSec>
+    </Drawer>}
+  </div>;
+}
+
+// ── CLIENTS 360 ────────────────────────────────────────────────
+function Client360Module({toast}) {
+  const [clients,setClients] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  const [detail,setDetail] = useState(null);
+  const [loadingDetail,setLoadingDetail] = useState(false);
+  const [tab,setTab] = useState('overview');
+
+  useEffect(()=>{ api('/api/v1/clients').then(d=>setClients(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+
+  const openClient = async c => {
+    setSelected(c); setLoadingDetail(true); setTab('overview');
+    try { const d=await api('/api/v1/clients/'+c.id+'/360'); setDetail(d); }
+    catch(e) { toast(e.message,'error'); }
+    finally { setLoadingDetail(false); }
+  };
+
+  if (selected) {
+    const TABS = ['overview','chamados','reclamacoes','rma','health'];
+    const TAB_LBL = {overview:'Visão Geral',chamados:'Chamados',reclamacoes:'Reclamações',rma:'RMA',health:'Health Score'};
+    return <div style={{position:'relative',minHeight:500}}>
+      <div style={{display:'flex',alignItems:'center',gap:12,marginBottom:18}}>
+        <Btn v="outline" s="btn-sm" onClick={()=>setSelected(null)}>← Voltar</Btn>
+        <div>
+          <div style={{fontSize:20,fontWeight:900,color:'var(--dark)'}}>{selected.name}{selected.is_vip?' ⭐':''}</div>
+          <div style={{fontSize:12,color:'var(--muted)'}}>{selected.cnpj} · {selected.city}, {selected.state} · Segmento: {selected.segment}</div>
+        </div>
+        <div style={{marginLeft:'auto',display:'flex',gap:8,alignItems:'center'}}>
+          <HealthBadge status={selected.health_status} score={selected.health_score}/>
+        </div>
+      </div>
+
+      {loadingDetail?<Loading text="Carregando 360°..."/>:detail&&<>
+        <div className="stat-grid" style={{marginBottom:18}}>
+          <KPI val={detail.summary?.open_tickets||0} label="Chamados abertos" accent="blue"/>
+          <KPI val={detail.summary?.open_complaints||0} label="Reclamações" accent="amber"/>
+          <KPI val={detail.summary?.open_returns||0} label="Devoluções" accent="purple"/>
+          <KPI val={detail.summary?.open_rmas||0} label="RMAs" accent="purple"/>
+          <KPI val={detail.summary?.csat_avg||'—'} label="CSAT médio" accent="green"/>
+          <KPI val={money(detail.summary?.total_revenue_at_risk||0)} label="Receita em risco" accent="red"/>
+        </div>
+        <div style={{display:'flex',gap:6,marginBottom:14,flexWrap:'wrap'}}>
+          {TABS.map(t=><button key={t} onClick={()=>setTab(t)} style={{padding:'6px 14px',borderRadius:7,fontSize:12,fontWeight:600,border:`1px solid ${tab===t?'var(--p)':'var(--line)'}`,background:tab===t?'var(--pbg)':'#fff',color:tab===t?'var(--p)':'var(--mid)',cursor:'pointer'}}>{TAB_LBL[t]}</button>)}
+        </div>
+        {tab==='overview'&&<div className="detail-grid" style={{gap:12}}>
+          {[['CNPJ',detail.client?.cnpj||'—'],['Cidade',`${detail.client?.city}, ${detail.client?.state}`],['Segmento',detail.client?.segment||'—'],['BU',detail.client?.primary_bu?.toUpperCase()||'—']].map(([k,v])=><div key={k} className="detail-sec"><label style={{fontSize:10,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em',display:'block',marginBottom:3}}>{k}</label><p style={{fontSize:13,color:'var(--ink)'}}>{v}</p></div>)}
+        </div>}
+        {tab==='chamados'&&<div className="tbl-wrap"><table><thead><tr><th>ID</th><th>Status</th><th>Tipo</th><th>SLA</th><th>Risco</th><th>Data</th></tr></thead><tbody>{(detail.tickets||[]).map(t=><tr key={t.id}><td><span style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)'}}>{t.id}</span></td><td><StatusBadge status={t.status} map={STATUS_T}/></td><td style={{fontSize:12}}>{t.occurrence_type}</td><td><SlaTag s={t.sla_state}/></td><td style={{fontSize:12,color:t.revenue_at_risk>0?'var(--red)':'var(--muted)'}}>{money(t.revenue_at_risk)}</td><td style={{fontSize:11,color:'var(--muted)'}}>{fd(t.created_at)}</td></tr>)}</tbody></table></div>}
+        {tab==='reclamacoes'&&<div className="tbl-wrap"><table><thead><tr><th>Tipo</th><th>Gravidade</th><th>Status</th><th>Risco</th></tr></thead><tbody>{(detail.complaints||[]).map(c=><tr key={c.id}><td style={{fontSize:12}}>{c.type_key}</td><td><CritBadge c={c.severity}/></td><td><StatusBadge status={c.status} map={STATUS_C}/></td><td style={{fontSize:12,color:c.loss_risk>0?'var(--red)':'var(--muted)'}}>{money(c.loss_risk)}</td></tr>)}</tbody></table></div>}
+        {tab==='rma'&&<div className="tbl-wrap"><table><thead><tr><th>Produto</th><th>S/N</th><th>Status</th><th>Garantia</th></tr></thead><tbody>{(detail.rmas||[]).map(r=><tr key={r.id}><td style={{fontWeight:600,color:'var(--dark)'}}>{r.product_name}</td><td style={{fontFamily:'monospace',fontSize:11}}>{r.serial_number||'—'}</td><td><StatusBadge status={r.status} map={STATUS_RMA}/></td><td><span className={`badge ${r.warranty?'b-resolved':'b-reopened'}`}>{r.warranty?'Garantia':'Fora'}</span></td></tr>)}</tbody></table></div>}
+        {tab==='health'&&<div className="detail-sec">
+          <div className="detail-sec-title">Evolução do Health Score</div>
+          {(detail.health_log||[]).length>0&&<div className="chart-card" style={{marginTop:10}}>
+            <ResponsiveContainer width="100%" height={180}>
+              <AreaChart data={[...detail.health_log].reverse().map(h=>({date:fd(h.changed_at||h.recorded_at),score:h.health_score}))}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--line)"/>
+                <XAxis dataKey="date" tick={{fill:'var(--muted)',fontSize:10}}/>
+                <YAxis domain={[0,100]} tick={{fill:'var(--muted)',fontSize:10}}/>
+                <Tooltip contentStyle={{fontSize:11}}/>
+                <Area type="monotone" dataKey="score" name="Score" stroke={HCOLOR[selected.health_status]} fill={HCOLOR[selected.health_status]+'33'} strokeWidth={2}/>
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>}
+        </div>}
+      </>}
+    </div>;
+  }
+
+  return <div>
+    <div className="sec-hdr"><span className="sec-title">Cliente 360 — Carteira</span></div>
+    {loading?<Loading/>:
+    <div className="card-grid">
+      {clients.map(c=><div key={c.id} className="client-card" style={{borderLeftColor:HCOLOR[c.health_status]||'var(--line)'}} onClick={()=>openClient(c)}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:10}}>
+          <div><div style={{fontSize:14,fontWeight:700,color:'var(--dark)'}}>{c.name}{c.is_vip?' ⭐':''}</div><div style={{fontSize:11,color:'var(--muted)'}}>{c.city}, {c.state}</div></div>
+          <HealthBadge status={c.health_status} score={c.health_score}/>
+        </div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6,marginBottom:8}}>
+          {[['Cham.',c.open_tickets,'var(--blue)'],['Reclam.',c.open_complaints,'var(--amber)'],['Devol.',c.open_returns,'var(--p)'],['RMA',c.open_rmas,'var(--muted)']].map(([l,v,col])=><div key={l} style={{textAlign:'center',background:'var(--bg)',borderRadius:5,padding:'4px 0'}}>
+            <div style={{fontSize:16,fontWeight:800,color:v>0?col:'var(--muted)'}}>{v||0}</div>
+            <div style={{fontSize:9,color:'var(--muted)',fontWeight:600}}>{l}</div>
+          </div>)}
+        </div>
+        {c.revenue_at_risk>0&&<div style={{fontSize:12,fontWeight:600,color:'var(--red)'}}>⚠ {money(c.revenue_at_risk)} em risco</div>}
+      </div>)}
+    </div>}
+  </div>;
+}
+
+// ── HEALTH SCORE ───────────────────────────────────────────────
+function HealthScoreModule({toast}) {
+  const [clients,setClients] = useState([]);
+  const [loading,setLoading] = useState(true);
+  useEffect(()=>{ api('/api/v1/clients').then(d=>setClients(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+  const dist = ['healthy','attention','at_risk','critical','recovered'].map(s=>({name:HEALTH[s],value:clients.filter(c=>c.health_status===s).length,color:HCOLOR[s]})).filter(d=>d.value>0);
+  return <div>
+    <div className="stat-grid">
+      {[['healthy','Saudáveis','green'],['attention','Atenção','amber'],['at_risk','Em risco','red'],['critical','Críticos','red'],['recovered','Recuperados','blue']].map(([s,l,a])=><KPI key={s} val={clients.filter(c=>c.health_status===s).length} label={l} accent={a}/>)}
+    </div>
+    {loading?<Loading/>:<>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+        <div className="chart-card">
+          <div className="chart-title">Distribuição por Status</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <PieChart><Pie data={dist} cx="50%" cy="50%" innerRadius={45} outerRadius={65} dataKey="value" paddingAngle={2}>{dist.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip contentStyle={{fontSize:11}} formatter={(v,n)=>[v+' clientes',n]}/></PieChart>
+          </ResponsiveContainer>
+          <div style={{display:'flex',flexWrap:'wrap',gap:8,justifyContent:'center',marginTop:4}}>
+            {dist.map(d=><div key={d.name} style={{display:'flex',alignItems:'center',gap:4,fontSize:10,color:'var(--muted)'}}><div style={{width:7,height:7,borderRadius:'50%',background:d.color}}/>{d.name} ({d.value})</div>)}
+          </div>
+        </div>
+        <div className="chart-card">
+          <div className="chart-title">Score por Cliente</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={clients.map(c=>({name:c.name.split(' ')[0],score:c.health_score,status:c.health_status}))}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--line)"/>
+              <XAxis dataKey="name" tick={{fill:'var(--muted)',fontSize:9}}/>
+              <YAxis domain={[0,100]} tick={{fill:'var(--muted)',fontSize:9}}/>
+              <Tooltip contentStyle={{fontSize:11}}/>
+              <Bar dataKey="score" radius={[3,3,0,0]}>{clients.map((c,i)=><Cell key={i} fill={HCOLOR[c.health_status]}/>)}</Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+      <div className="tbl-wrap">
+        <table><thead><tr><th>Cliente</th><th>Status</th><th>Score</th><th>Chamados</th><th>Reclamações</th><th>CSAT</th><th>Receita em Risco</th></tr></thead>
+        <tbody>{clients.map(c=><tr key={c.id}>
+          <td style={{fontWeight:600,color:'var(--dark)'}}>{c.name}{c.is_vip?' ⭐':''}</td>
+          <td><HealthBadge status={c.health_status}/></td>
+          <td><div style={{display:'flex',alignItems:'center',gap:8}}><div style={{width:80,background:'var(--bg)',borderRadius:4,height:7,overflow:'hidden'}}><div style={{width:`${c.health_score}%`,height:'100%',background:HCOLOR[c.health_status],borderRadius:4}}/></div><span style={{fontSize:12,fontWeight:700,color:HCOLOR[c.health_status]}}>{c.health_score}</span></div></td>
+          <td style={{fontSize:12,color:c.open_tickets>0?'var(--red)':'var(--muted)',fontWeight:c.open_tickets>0?600:400}}>{c.open_tickets||0}</td>
+          <td style={{fontSize:12,color:c.open_complaints>0?'var(--red)':'var(--muted)',fontWeight:c.open_complaints>0?600:400}}>{c.open_complaints||0}</td>
+          <td style={{fontSize:12,fontWeight:600,color:(c.csat_avg||c.csat_score)>=4?'var(--green)':(c.csat_avg||c.csat_score)>=3?'var(--amber)':'var(--red)'}}>{c.csat_avg||c.csat_score||'—'}</td>
+          <td style={{fontSize:12,fontWeight:c.revenue_at_risk>0?600:400,color:c.revenue_at_risk>0?'var(--red)':'var(--muted)'}}>{money(c.revenue_at_risk||c.total_revenue_at_risk)}</td>
+        </tr>)}</tbody></table>
+      </div>
+    </>}
+  </div>;
+}
+
+// ── CSAT/NPS ───────────────────────────────────────────────────
+function CSATModule({toast}) {
+  const [tab,setTab] = useState('csat');
+  const [csat,setCsat] = useState({data:[],csat_avg:null});
+  const [nps,setNps] = useState({data:[],nps_score:null});
+  const [loading,setLoading] = useState(true);
+  useEffect(()=>{
+    Promise.all([api('/api/v1/csat'),api('/api/v1/nps')]).then(([c,n])=>{ setCsat(c); setNps(n); }).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false));
+  },[]);
+  const STAR = n => '⭐'.repeat(Math.min(n,5));
+  const NPS_CLR = {promoter:'var(--green)',neutral:'var(--amber)',detractor:'var(--red)'};
+  return <div>
+    <div style={{display:'flex',gap:6,marginBottom:16}}>
+      {['csat','nps'].map(t=><button key={t} onClick={()=>setTab(t)} style={{padding:'7px 18px',borderRadius:7,fontSize:13,fontWeight:600,border:`1px solid ${tab===t?'var(--p)':'var(--line)'}`,background:tab===t?'var(--pbg)':'#fff',color:tab===t?'var(--p)':'var(--mid)',cursor:'pointer'}}>{t.toUpperCase()}</button>)}
+    </div>
+    {loading?<Loading/>:tab==='csat'?<>
+      <div className="stat-grid">
+        <KPI val={csat.csat_avg||'—'} label="CSAT Médio" accent="green"/>
+        <KPI val={(csat.data||[]).filter(c=>c.score>=4).length} label="Satisfeitos (4-5)" accent="green"/>
+        <KPI val={(csat.data||[]).filter(c=>c.score<=2).length} label="Insatisfeitos (1-2)" accent="red"/>
+      </div>
+      <div className="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Nota</th><th>Comentário</th><th>Chamado</th><th>Data</th></tr></thead>
+      <tbody>{(csat.data||[]).map((c,i)=><tr key={i}>
+        <td style={{fontWeight:600,color:'var(--dark)'}}>{c.client_name||'-'}</td>
+        <td><span style={{fontSize:18,fontWeight:900,color:c.score>=4?'var(--green)':c.score>=3?'var(--amber)':'var(--red)'}}>{c.score}</span> {STAR(c.score)}</td>
+        <td style={{fontSize:12,fontStyle:'italic',color:'var(--mid)'}}>"{c.comment||'—'}"</td>
+        <td style={{fontFamily:'monospace',fontSize:10,color:'var(--muted)'}}>{c.ticket_id||'—'}</td>
+        <td style={{fontSize:11,color:'var(--muted)'}}>{fd(c.collection_date)}</td>
+      </tr>)}</tbody></table></div>
+    </>:<>
+      <div className="stat-grid">
+        <KPI val={nps.nps_score??'—'} label="NPS Score" accent={nps.nps_score>=50?'green':'red'}/>
+        <KPI val={nps.promoters||0} label="Promotores (9-10)" accent="green"/>
+        <KPI val={nps.neutrals||0} label="Neutros (7-8)" accent="amber"/>
+        <KPI val={nps.detractors||0} label="Detratores (0-6)" accent="red"/>
+      </div>
+      <div className="tbl-wrap"><table><thead><tr><th>Cliente</th><th>Nota</th><th>Classificação</th><th>Comentário</th><th>Data</th></tr></thead>
+      <tbody>{(nps.data||[]).map((n,i)=><tr key={i}>
+        <td style={{fontWeight:600,color:'var(--dark)'}}>{n.client_name||'-'}</td>
+        <td><span style={{fontSize:20,fontWeight:900,color:NPS_CLR[n.nps_type]||'var(--muted)'}}>{n.score}</span></td>
+        <td><span className="badge" style={{background:NPS_CLR[n.nps_type]+'22',color:NPS_CLR[n.nps_type]}}>{n.nps_type==='promoter'?'Promotor':n.nps_type==='neutral'?'Neutro':'Detrator'}</span></td>
+        <td style={{fontSize:12,fontStyle:'italic'}}>"{n.comment||'—'}"</td>
+        <td style={{fontSize:11,color:'var(--muted)'}}>{fd(n.collection_date)}</td>
+      </tr>)}</tbody></table></div>
+    </>}
+  </div>;
+}
+
+// ── RECOVERY PLANS ─────────────────────────────────────────────
+function RecoveryModule({toast}) {
+  const [items,setItems] = useState([]);
+  const [loading,setLoading] = useState(true);
+  const [selected,setSelected] = useState(null);
+  useEffect(()=>{ api('/api/v1/recovery-plans').then(d=>setItems(d.data||d||[])).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+  const STATUS_REC = {open:'Aberto',in_progress:'Em andamento',awaiting_client:'Aguard. cliente',completed:'Concluído',cancelled:'Cancelado',pending:'Pendente'};
+  return <div>
+    <div className="sec-hdr"><span className="sec-title">Planos de Recuperação ({items.length})</span></div>
+    {loading?<Loading/>:<div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {!items.length&&<Empty icon="↑" title="Nenhum plano ativo" desc="Planos de recuperação são criados para clientes em risco."/>}
+      {items.map(p=><div key={p.id} style={{background:'#fff',border:'1px solid var(--line)',borderRadius:10,padding:'14px 16px',cursor:'pointer',borderLeft:`4px solid ${p.status==='in_progress'?'var(--amber)':p.status==='completed'?'var(--green)':p.status==='open'?'var(--red)':'var(--muted)'}`}} onClick={()=>setSelected(p)}>
+        <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',marginBottom:8}}>
+          <div><div style={{fontSize:14,fontWeight:700,color:'var(--dark)'}}>{p.client_name||'Cliente'}</div><div style={{fontSize:11,color:'var(--muted)'}}>Resp: {p.responsible_name||'—'} · Revisão: {fd(p.next_review_date)}</div></div>
+          <span className={`badge ${p.status==='in_progress'?'b-progress':p.status==='completed'?'b-resolved':p.status==='open'?'b-new':'b-closed'}`}>{STATUS_REC[p.status]||p.status}</span>
+        </div>
+        <div style={{fontSize:13,color:'var(--mid)',marginBottom:8}}>{p.reason}</div>
+        <div style={{display:'flex',gap:14,alignItems:'center'}}>
+          <span style={{fontSize:12,color:'var(--muted)'}}>Score atual: <strong style={{color:'var(--red)'}}>{p.health_score_at_open||p.health_score||'—'}</strong> → meta <strong style={{color:'var(--green)'}}>{p.target_health_score||70}</strong></span>
+          <div style={{flex:1,background:'var(--bg)',borderRadius:4,height:6,overflow:'hidden'}}><div style={{width:`${p.health_score_at_open||p.health_score||0}%`,height:'100%',background:'var(--red)',borderRadius:4}}/></div>
+        </div>
+      </div>)}
+    </div>}
+    {selected&&<Drawer title={`Plano — ${selected.client_name}`} badges={<span className={`badge ${selected.status==='in_progress'?'b-progress':selected.status==='completed'?'b-resolved':'b-new'}`}>{STATUS_REC[selected.status]||selected.status}</span>} onClose={()=>setSelected(null)}>
+      <DetailSec title="Detalhes"><p style={{fontSize:13,color:'var(--mid)',marginBottom:12,lineHeight:1.6}}>{selected.reason}</p><div className="detail-grid">
+        {[['Responsável',selected.responsible_name||'—'],['Próx. revisão',fd(selected.next_review_date)],['Score abertura',selected.health_score_at_open||'—'],['Meta',selected.target_health_score||70],['Expected',selected.expected_result||'—']].map(([k,v])=><div key={k} className="d-item"><label>{k}</label><p>{v}</p></div>)}
+      </div></DetailSec>
+      {selected.actions?.length>0&&<DetailSec title="Ações do Plano">
+        {selected.actions.map((a,i)=><div key={i} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:'1px solid var(--line)'}}>
+          <span style={{fontSize:14}}>{a.status==='done'?'✅':a.status==='in_progress'?'🔄':'☐'}</span>
+          <span style={{fontSize:13,color:'var(--dark)'}}>{a.description}</span>
+          {a.due_date&&<span style={{fontSize:11,color:'var(--muted)',marginLeft:'auto'}}>{fd(a.due_date)}</span>}
+        </div>)}
+      </DetailSec>}
+    </Drawer>}
+  </div>;
+}
+
+// ── REPORTS ────────────────────────────────────────────────────
+function ReportsModule({toast}) {
+  const [data,setData] = useState(null);
+  const [loading,setLoading] = useState(true);
+  useEffect(()=>{ api('/api/v1/dashboard/reports').then(setData).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); },[]);
+  if(loading) return <Loading/>;
+  if(!data) return <Empty icon="📊" title="Sem dados"/>;
+  const P = {purple:'var(--p)',blue:'var(--blue)',green:'var(--green)',red:'var(--red)',amber:'var(--amber)'};
+  return <div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:14}}>
+      <div className="chart-card"><div className="chart-title">Chamados por Status</div>
+        <ResponsiveContainer width="100%" height={180}><BarChart data={data.tickets_by_status||[]} margin={{left:-10}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)"/><XAxis dataKey="status" tick={{fill:'var(--muted)',fontSize:9}} angle={-15} textAnchor="end" height={36}/><YAxis tick={{fill:'var(--muted)',fontSize:9}}/><Tooltip contentStyle={{fontSize:11}} formatter={v=>[v,'Chamados']}/><Bar dataKey="count" fill="var(--p)" radius={[3,3,0,0]}/></BarChart></ResponsiveContainer>
+      </div>
+      <div className="chart-card"><div className="chart-title">CSAT por Cliente</div>
+        <ResponsiveContainer width="100%" height={180}><BarChart data={data.csat_by_client||[]} layout="vertical" margin={{left:50}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false}/><XAxis type="number" domain={[0,5]} tick={{fill:'var(--muted)',fontSize:9}}/><YAxis type="category" dataKey="name" tick={{fill:'var(--mid)',fontSize:10}} width={48}/><Tooltip contentStyle={{fontSize:11}} formatter={v=>[v,'CSAT']}/><Bar dataKey="csat_avg" radius={[0,3,3,0]}>{(data.csat_by_client||[]).map((e,i)=><Cell key={i} fill={e.csat_avg>=4?P.green:e.csat_avg>=3?P.amber:P.red}/>)}</Bar></BarChart></ResponsiveContainer>
+      </div>
+      <div className="chart-card"><div className="chart-title">Receita em Risco por Cliente</div>
+        <ResponsiveContainer width="100%" height={180}><BarChart data={data.revenue_at_risk||[]} layout="vertical" margin={{left:60}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false}/><XAxis type="number" tick={{fill:'var(--muted)',fontSize:9}} tickFormatter={v=>'R$'+Math.round(v/1000)+'k'}/><YAxis type="category" dataKey="name" tick={{fill:'var(--mid)',fontSize:10}} width={58} tickFormatter={v=>v.split(' ')[0]}/><Tooltip contentStyle={{fontSize:11}} formatter={v=>[money(v),'Risco']}/><Bar dataKey="total" fill={P.red} radius={[0,3,3,0]}/></BarChart></ResponsiveContainer>
+      </div>
+      <div className="chart-card"><div className="chart-title">Chamados por Área</div>
+        <ResponsiveContainer width="100%" height={180}><BarChart data={data.tickets_by_area||[]} layout="vertical" margin={{left:60}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false}/><XAxis type="number" tick={{fill:'var(--muted)',fontSize:9}}/><YAxis type="category" dataKey="area" tick={{fill:'var(--mid)',fontSize:10}} width={58}/><Tooltip contentStyle={{fontSize:11}}/><Bar dataKey="count" fill={P.purple} radius={[0,3,3,0]}/></BarChart></ResponsiveContainer>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── SETTINGS ───────────────────────────────────────────────────
+function SettingsModule({apiBase,onChangeApi,toast}) {
+  const [url,setUrl] = useState(apiBase);
+  const [health,setHealth] = useState(null);
+  const [testing,setTesting] = useState(false);
+  const test = async()=>{ setTesting(true); try{ const h=await fetch(url.trim().replace(/\/$/,'')+'/health').then(r=>r.json()); setHealth(h); toast('✓ Conectado: db='+h.db+' redis='+h.redis,'success'); }catch{ setHealth(null); toast('Falha na conexão','error'); } finally{ setTesting(false); } };
+  const save = ()=>{ const u=url.trim().replace(/\/$/,''); try{localStorage.setItem('cso_base',u);}catch(e){} _state.base=u; onChangeApi(u); toast('URL salva ✓','success'); };
+  return <div style={{maxWidth:520}}>
+    <div style={{background:'#fff',border:'1px solid var(--line)',borderRadius:12,padding:22}}>
+      <div style={{fontSize:16,fontWeight:800,color:'var(--dark)',marginBottom:4}}>Configuração da API</div>
+      <div style={{fontSize:13,color:'var(--muted)',marginBottom:16}}>URL base do backend Nextra CSO Hub</div>
+      <div style={{display:'flex',gap:8}}>
+        <input className="f-inp" style={{flex:1}} value={url} onChange={e=>setUrl(e.target.value)} placeholder="http://localhost:3001"/>
+        <Btn v="outline" loading={testing} onClick={test}>Testar</Btn>
+        <Btn v="purple" onClick={save}>Salvar</Btn>
+      </div>
+      {health&&<div style={{marginTop:10,padding:'10px 14px',borderRadius:8,background:'#ECFDF5',color:'#065F46',border:'1px solid #A7F3D0',fontSize:13,fontWeight:500}}>✓ db:{health.db} · redis:{health.redis} · env:{health.env}</div>}
+      <div style={{marginTop:14,padding:'12px 14px',background:'var(--bg)',borderRadius:8,fontSize:12,color:'var(--muted)',lineHeight:1.7}}>
+        <strong>Para usar com backend local:</strong><br/>
+        <strong>A)</strong> <code style={{background:'var(--dark)',color:'var(--pl)',padding:'1px 5px',borderRadius:3,fontSize:11}}>ngrok http 3001</code> → cole a URL HTTPS<br/>
+        <strong>B)</strong> Abra o index.html direto no Chrome (file://) com localhost:3001<br/>
+        <strong>C)</strong> <code style={{background:'var(--dark)',color:'var(--pl)',padding:'1px 5px',borderRadius:3,fontSize:11}}>python3 -m http.server 8080</code> → acesse http://localhost:8080
+      </div>
+    </div>
+  </div>;
+}
+
+// ── EXECUTIVE DASHBOARD ────────────────────────────────────────
+function ExecDashboard({toast}) {
+  const [data,setData] = useState(null);
+  const [loading,setLoading] = useState(true);
+  const load = () => { setLoading(true); api('/api/v1/dashboard/executive').then(setData).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); };
+  useEffect(()=>{ load(); },[]);
+  if(loading) return <Loading text="Carregando dashboard executivo..."/>;
+  if(!data) return <Empty icon="📊" title="Dados indisponíveis"/>;
+  const s = data.summary||{};
+  const trend = (data.trend||[]).map(t=>({...t,chamados:Number(t.chamados||0),reclamacoes:Number(t.reclamacoes||0),sla_ok:Number(t.sla_ok||t.sla_ok_pct||0)}));
+  const hd = data.health_distribution||[];
+  const pie = hd.map(d=>({name:HEALTH[d.health_status]||d.health_status,value:Number(d.count),color:HCOLOR[d.health_status]}));
+  return <div>
+    <div style={{marginBottom:18,padding:'12px 18px',background:'var(--dark2)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <div><div style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'.1em',color:'var(--pl)',marginBottom:2}}>Nextra CSO Hub · BU LED/PRO AV</div><div style={{fontSize:20,fontWeight:900,color:'#fff'}}>Dashboard Executivo</div></div>
+      <div style={{fontSize:11,color:'rgba(255,255,255,.35)'}}>{new Date().toLocaleDateString('pt-BR',{weekday:'long',day:'2-digit',month:'long'})}</div>
+    </div>
+    <div className="stat-grid" style={{gridTemplateColumns:'repeat(5,1fr)'}}>
+      <KPI val={s.open_tickets||0} label="Chamados abertos" accent="blue"/>
+      <KPI val={s.sla_overdue||0} label="SLA vencido" sub={`+ ${s.sla_warn||0} em atenção`} accent="red"/>
+      <KPI val={s.open_complaints||0} label="Reclamações" sub={`${s.critical_complaints||0} críticas`} accent="amber"/>
+      <KPI val={`${s.open_returns||0} / ${s.open_rmas||0}`} label="Devol. / RMAs" accent="purple"/>
+      <KPI val={s.clients_at_risk||0} label="Clientes em risco" sub={`${s.clients_critical||0} críticos`} accent="red"/>
+    </div>
+    <div className="stat-grid" style={{gridTemplateColumns:'repeat(5,1fr)',marginTop:0}}>
+      <KPI val={money(s.total_revenue_at_risk||0)} label="Receita em risco" accent="red"/>
+      <KPI val={s.csat_avg||'—'} label="CSAT médio (30d)" accent="green"/>
+      <KPI val={`${s.avg_aging_days||0}d`} label="Aging médio" accent="amber"/>
+      <KPI val={s.clients_recovered||0} label="Recuperados" accent="green"/>
+      <KPI val={`${s.sla_ok_pct||76}%`} label="SLA no prazo" accent="blue"/>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'2fr 1fr',gap:14,marginBottom:14}}>
+      <div className="chart-card"><div className="chart-title">Tendência Operacional — 6 meses</div>
+        <ResponsiveContainer width="100%" height={180}><AreaChart data={trend} margin={{top:4,right:4,left:-20,bottom:0}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)"/><XAxis dataKey="month" tick={{fill:'var(--muted)',fontSize:10}}/><YAxis tick={{fill:'var(--muted)',fontSize:10}}/><Tooltip contentStyle={{fontSize:11}}/><Area type="monotone" dataKey="chamados" name="Chamados" stroke="var(--p)" fill="var(--pbg)" strokeWidth={2}/><Area type="monotone" dataKey="reclamacoes" name="Reclamações" stroke="var(--red)" fill="#FEF2F2" strokeWidth={2}/></AreaChart></ResponsiveContainer>
+      </div>
+      <div className="chart-card"><div className="chart-title">Saúde dos Clientes</div>
+        <ResponsiveContainer width="100%" height={140}><PieChart><Pie data={pie} cx="50%" cy="50%" innerRadius={40} outerRadius={60} dataKey="value" paddingAngle={2}>{pie.map((d,i)=><Cell key={i} fill={d.color}/>)}</Pie><Tooltip contentStyle={{fontSize:11}} formatter={(v,n)=>[v+' clientes',n]}/></PieChart></ResponsiveContainer>
+        <div style={{display:'flex',flexWrap:'wrap',gap:6,justifyContent:'center',marginTop:4}}>{pie.map(d=><div key={d.name} style={{display:'flex',alignItems:'center',gap:3,fontSize:10,color:'var(--muted)'}}><div style={{width:7,height:7,borderRadius:'50%',background:d.color}}/>{d.name}({d.value})</div>)}</div>
+      </div>
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+      <div className="chart-card"><div className="chart-title">Ranking — Áreas com Mais Ocorrências</div>
+        <ResponsiveContainer width="100%" height={180}><BarChart data={data.area_ranking||[]} layout="vertical" margin={{left:70,right:8}}><CartesianGrid strokeDasharray="3 3" stroke="var(--line)" horizontal={false}/><XAxis type="number" tick={{fill:'var(--muted)',fontSize:9}}/><YAxis type="category" dataKey="area" tick={{fill:'var(--mid)',fontSize:10}} width={68}/><Tooltip contentStyle={{fontSize:11}}/><Bar dataKey="ticket_count" name="Ocorrências" fill="var(--p)" radius={[0,3,3,0]}/></BarChart></ResponsiveContainer>
+      </div>
+      <div className="chart-card"><div className="chart-title">Ranking — Clientes com Mais Ocorrências</div>
+        {(data.client_ranking||[]).slice(0,6).map((c,i)=><div key={c.id||i} style={{display:'flex',alignItems:'center',gap:10,padding:'7px 0',borderBottom:'1px solid var(--line)'}}>
+          <span style={{fontSize:11,fontWeight:700,color:'var(--muted)',width:16}}>{i+1}.</span>
+          <div style={{flex:1}}><div style={{fontSize:13,fontWeight:600,color:'var(--dark)'}}>{c.name}</div><div style={{fontSize:10,color:'var(--muted)'}}>{c.open_tickets||0} cham. · {c.open_complaints||0} reclam.</div></div>
+          <HealthBadge status={c.health_status}/>
+        </div>)}
+      </div>
+    </div>
+  </div>;
+}
+
+// ── CONTROL TOWER ──────────────────────────────────────────────
+function ControlTower({toast}) {
+  const [data,setData] = useState(null);
+  const [loading,setLoading] = useState(true);
+  const load = () => { setLoading(true); api('/api/v1/dashboard/control-tower').then(setData).catch(e=>toast(e.message,'error')).finally(()=>setLoading(false)); };
+  useEffect(()=>{ load(); },[]);
+  function AlertCard({title,items,color,icon,cnt}) {
+    const arr = Array.isArray(items)?items:[];
+    return <div className="alert-card" style={{borderLeftColor:color}}>
+      <div className="alert-card-title">
+        <span style={{display:'flex',alignItems:'center',gap:7,fontSize:13,fontWeight:700,color:'var(--dark)'}}><span>{icon}</span>{title}</span>
+        <span className="alert-cnt" style={{background:color}}>{cnt??arr.length}</span>
+      </div>
+      {arr.slice(0,3).map((it,i)=><div key={i} style={{fontSize:12,color:'var(--mid)',padding:'3px 0',borderBottom:i<Math.min(arr.length,3)-1?'1px dashed var(--line)':'none',display:'flex',justifyContent:'space-between',gap:8}}>
+        <span style={{flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{it.client_name||it.client} — {(it.description||it.defect_description||'').slice(0,50)}</span>
+        {it.sla_state&&<SlaTag s={it.sla_state}/>}
+      </div>)}
+      {arr.length>3&&<div style={{fontSize:11,color:'var(--p)',marginTop:5,cursor:'pointer'}}>+{arr.length-3} mais</div>}
+    </div>;
+  }
+  if(loading) return <Loading text="Carregando torre de controle..."/>;
+  if(!data) return <Empty icon="⚡" title="Torre de controle indisponível"/>;
+  const pa = data.pending_approval||[];
+  const nu = data.no_update_tickets||[];
+  return <div>
+    <div style={{marginBottom:18,padding:'12px 18px',background:'var(--dark2)',borderRadius:12,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+      <div><div style={{fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'.1em',color:'var(--red)',marginBottom:2}}>⚡ Operação em Tempo Real</div><div style={{fontSize:20,fontWeight:900,color:'#fff'}}>Torre de Controle CSO</div></div>
+      <div style={{display:'flex',alignItems:'center',gap:6}}><div style={{width:7,height:7,borderRadius:'50%',background:'var(--green)',animation:'pulse 2s infinite'}}/><span style={{fontSize:11,color:'rgba(255,255,255,.4)'}}>Atualizado agora</span></div>
+    </div>
+    <div className="stat-grid" style={{gridTemplateColumns:'repeat(4,1fr)',marginBottom:18}}>
+      {[['Chamados Críticos',(data.critical_tickets||[]).length,'var(--red)'],['SLA Vencido',(data.sla_overdue||[]).length,'var(--red)'],['Sem Dono',(data.no_owner_tickets||[]).length,'var(--amber)'],['Fila de Chancelas',pa.length,'var(--p)']].map(([l,v,c])=><div key={l} style={{background:'#fff',border:`1px solid ${c}30`,borderRadius:10,padding:'12px 16px',borderTop:`3px solid ${c}`}}><div style={{fontSize:28,fontWeight:900,color:c}}>{v}</div><div style={{fontSize:10,fontWeight:700,color:'var(--muted)',textTransform:'uppercase',letterSpacing:'.05em',marginTop:2}}>{l}</div></div>)}
+    </div>
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:'var(--dark)',marginBottom:10}}>🚨 Alertas Críticos</div>
+        <AlertCard title="Chamados Críticos" items={data.critical_tickets||[]} color="var(--red)" icon="🔴"/>
+        <AlertCard title="SLA Vencido" items={data.sla_overdue||[]} color="var(--red)" icon="⏰"/>
+        <AlertCard title="Reclamações Críticas" items={data.critical_complaints||[]} color="var(--red)" icon="⚠️"/>
+      </div>
+      <div>
+        <div style={{fontSize:13,fontWeight:700,color:'var(--dark)',marginBottom:10}}>📋 Pendências</div>
+        <AlertCard title="Sem Dono" items={data.no_owner_tickets||[]} color="var(--amber)" icon="👤"/>
+        <AlertCard title="Fila de Chancelas" cnt={pa.length} items={pa.map(t=>({...t,description:'Aguardando aprovação de Igor'}))} color="var(--p)" icon="✅"/>
+        <AlertCard title="Sem Update > 48h" items={nu} color="var(--amber)" icon="💤"/>
+        <AlertCard title="Devoluções Travadas" items={data.blocked_returns||[]} color="var(--amber)" icon="↩"/>
+        <AlertCard title="RMAs Parados" items={data.stuck_rmas||[]} color="var(--blue)" icon="🔧"/>
+      </div>
+    </div>
+  </div>;
+}
+
+// ── SIDEBAR & APP ──────────────────────────────────────────────
+function Sidebar({view,setView,health,user,onLogout,counts}) {
+  const hOk = health&&health.db==='ok';
+  const groups = [
+    {label:'Visão',items:[{id:'dashboard',icon:'◉',label:'Dashboard Executivo'},{id:'tower',icon:'⚡',label:'Torre de Controle',badge:counts.critical,badgeCls:''}]},
+    {label:'Operação',items:[{id:'tickets',icon:'◈',label:'Chamados',badge:counts.openTickets,badgeCls:'warn'},{id:'complaints',icon:'⚠',label:'Reclamações',badge:counts.openComplaints,badgeCls:''},{id:'returns',icon:'↩',label:'Devoluções'},{id:'rma',icon:'🔧',label:'RMA'}]},
+    {label:'Clientes',items:[{id:'clients',icon:'👁',label:'Cliente 360'},{id:'health',icon:'♥',label:'Health Score'},{id:'csat',icon:'⭐',label:'CSAT / NPS'},{id:'recovery',icon:'↑',label:'Planos de Recuperação'}]},
+    {label:'Gestão',items:[{id:'reports',icon:'📊',label:'Relatórios'},{id:'settings',icon:'⚙',label:'Configurações'}]},
+  ];
+  return <aside className="sidebar">
+    <div className="sb-brand"><div className="dot"/><span>CSO Hub</span><small>FULL v1.0</small></div>
+    <nav className="sb-nav">
+      {groups.map(g=><div key={g.label}>
+        <div className="sb-grp">{g.label}</div>
+        {g.items.map(n=><button key={n.id} className={`sb-item${view===n.id?' active':''}`} onClick={()=>setView(n.id)}>
+          <span className="icon">{n.icon}</span><span style={{flex:1}}>{n.label}</span>
+          {n.badge>0&&<span className={`sb-badge ${n.badgeCls||''}`}>{n.badge}</span>}
+        </button>)}
+      </div>)}
+    </nav>
+    <div className="sb-user">
+      <div className="sb-avatar">{(user?.name||user?.login||'U')[0]}</div>
+      <div className="sb-uinfo"><div className="sb-uname">{user?.name||user?.login}</div><div className="sb-urole">{user?.role}</div></div>
+      <button className="sb-logout" onClick={onLogout} title="Sair">↩</button>
+    </div>
+  </aside>;
+}
+
+function LoginPage({onLogin}) {
+  const [url,setUrl] = useState(_state.base||(typeof window!=='undefined'?window.location.origin:''));
+  const [login,setLogin] = useState('igor');
+  const [pass,setPass] = useState('igor@2026');
+  const [err,setErr] = useState('');
+  const [busy,setBusy] = useState(false);
+  const [editUrl,setEditUrl] = useState(false);
+  const [tempUrl,setTempUrl] = useState(url||(typeof window!=='undefined'?window.location.origin:''));
+  const saveUrl = () => { const u=tempUrl.trim().replace(/\/$/,''); try{localStorage.setItem('cso_base',u);}catch(e){} _state.base=u; setUrl(u); setEditUrl(false); };
+  const submit = async e => {
+    e.preventDefault(); setErr(''); setBusy(true);
+    try { const d=await api('/api/v1/auth/login','POST',{login,password:pass}); _state.token=d.token; try{localStorage.setItem('cso_token',d.token); localStorage.setItem('cso_user',JSON.stringify(d.user));}catch(e){} onLogin(d); }
+    catch(e) { const isNet=!e.status&&(e.message?.includes('fetch')||e.message?.includes('NetworkError')||e.message?.includes('Failed')); setErr(isNet?'Não foi possível conectar ao servidor. Verifique se o backend está online.':e.message||'Login ou senha inválidos'); }
+    finally { setBusy(false); }
+  };
+  return <div className="login-wrap">
+    <div className="login-box">
+      <div className="login-logo"><div className="dot"/><span>Nextra CSO Hub</span><small>Full v1.0</small></div>
+      <div className="login-title">Cockpit Corporativo</div>
+      <div className="login-sub">Customer Success & Operations — Grupo Nextra</div>
+      {err&&<div className="login-err">⚠ {err}</div>}
+      <form onSubmit={submit}>
+        <div style={{marginBottom:14}}><label className="field-lbl">Login</label><input className="field-inp" value={login} onChange={e=>setLogin(e.target.value)} autoFocus/></div>
+        <div style={{marginBottom:22}}><label className="field-lbl">Senha</label><input type="password" className="field-inp" value={pass} onChange={e=>setPass(e.target.value)}/></div>
+        <button type="submit" className="login-btn" disabled={busy}>{busy?<><span className="spinner sm white"/>Entrando...</>:'Entrar no Cockpit →'}</button>
+        {!url&&<div style={{marginTop:12,fontSize:12,color:'rgba(255,255,255,.5)',textAlign:'center'}}>Configure a URL da API abaixo antes de entrar</div>}
+      </form>
+      {!editUrl?<div className="login-api">
+        <span className="login-api-url">{url||'Nenhuma URL configurada'}</span>
+        <span className="login-api-btn" onClick={()=>setEditUrl(true)}>⚙ mudar</span>
+      </div>:<div style={{marginTop:14,display:'flex',gap:8,flexDirection:'column'}}>
+        <input className="login-api-inp" value={tempUrl} onChange={e=>setTempUrl(e.target.value)} placeholder="http://localhost:3001 ou https://xxx.ngrok.io" onKeyDown={e=>e.key==='Enter'&&saveUrl()}/>
+        <div style={{display:'flex',gap:8}}><button onClick={saveUrl} className="login-api-save">Salvar</button><button onClick={()=>setEditUrl(false)} style={{padding:'7px 12px',background:'none',border:'none',color:'rgba(255,255,255,.4)',cursor:'pointer',borderRadius:6,fontSize:12}}>Cancelar</button></div>
+      </div>}
+    </div>
+  </div>;
+}
+
+// ── ROOT APP ───────────────────────────────────────────────────
+function App() {
+  let initAuth = null;
+  try { const saved = localStorage.getItem('cso_user'); if(saved&&_state.token) initAuth={user:JSON.parse(saved),token:_state.token}; } catch(e) {}
+  const [auth,setAuth] = useState(initAuth);
+  const [view,setView] = useState('dashboard');
+  const [health,setHealth] = useState(null);
+  const [counts,setCounts] = useState({openTickets:0,openComplaints:0,critical:0});
+  const {toast,toasts} = useToast();
+
+  const checkHealth = useCallback(async()=>{ try{ const h=await api('/health'); setHealth(h); }catch{ setHealth(null); } },[]);
+  const loadCounts = useCallback(async()=>{
+    try {
+      const [ts,cs] = await Promise.all([api('/api/v1/tickets'),api('/api/v1/complaints')]);
+      const tickets = Array.isArray(ts)?ts:(ts.data||[]);
+      const complaints = Array.isArray(cs)?cs:(cs.data||[]);
+      setCounts({ openTickets:tickets.filter(t=>t.status!=='closed').length, openComplaints:complaints.filter(c=>c.status!=='closed'&&c.status!=='cancelled').length, critical:tickets.filter(t=>t.criticality==='critical'&&t.status!=='closed').length });
+    } catch{}
+  },[]);
+
+  useEffect(()=>{ if(auth){ checkHealth(); loadCounts(); const t=setInterval(()=>{ checkHealth(); },60000); return ()=>clearInterval(t); } },[auth]);
+
+  const onLogin = d => { setAuth(d); setTimeout(()=>{ checkHealth(); loadCounts(); },200); };
+  const onLogout = () => { api('/api/v1/auth/logout','POST').catch(()=>{}); try{localStorage.removeItem('cso_token'); localStorage.removeItem('cso_user');}catch(e){} _state.token=''; setAuth(null); };
+
+  if(!auth) return <><Toast toasts={toasts}/><LoginPage onLogin={onLogin}/></>;
+
+  const hOk = health&&health.db==='ok';
+  const TITLES = {dashboard:'Dashboard Executivo',tower:'Torre de Controle CSO',tickets:'Chamados',complaints:'Reclamações',returns:'Devoluções',rma:'RMA',clients:'Cliente 360',health:'Health Score',csat:'CSAT / NPS',recovery:'Planos de Recuperação',reports:'Relatórios',settings:'Configurações'};
+
+  const PAGE = {
+    dashboard: <ExecDashboard toast={toast}/>,
+    tower: <ControlTower toast={toast}/>,
+    tickets: <TicketsModule user={auth.user} toast={toast}/>,
+    complaints: <ComplaintsModule toast={toast}/>,
+    returns: <ReturnsModule toast={toast}/>,
+    rma: <RMAModule toast={toast}/>,
+    clients: <Client360Module toast={toast}/>,
+    health: <HealthScoreModule toast={toast}/>,
+    csat: <CSATModule toast={toast}/>,
+    recovery: <RecoveryModule toast={toast}/>,
+    reports: <ReportsModule toast={toast}/>,
+    settings: <SettingsModule apiBase={_state.base} onChangeApi={u=>{_state.base=u;}} toast={toast}/>,
+  };
+
+  return <>
+    <Toast toasts={toasts}/>
+    <div className="app">
+      <Sidebar view={view} setView={v=>{setView(v);}} health={health} user={auth.user} onLogout={onLogout} counts={counts}/>
+      <div className="main">
+        {health!==null&&<div className={`hbar ${hOk?'ok':'fail'}`}>
+          <span className={`hbar-dot ${hOk?'ok':'fail'}`}/>
+          {hOk?`✓ db:ok · redis:${health.redis} · ${health.env} · ${new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`:`⚠ API degradada — db:${health?.db||'error'}`}
+        </div>}
+        <div className="topbar">
+          <span className="topbar-title">{TITLES[view]}</span>
+          <div className="topbar-actions">
+            {view!=='settings'&&<Btn v="outline" s="btn-sm" onClick={()=>{ checkHealth(); loadCounts(); toast('Atualizado','info'); }}>↻</Btn>}
+            {['tickets','dashboard','kanban'].includes(view)&&null}
+          </div>
+        </div>
+        <div className="content">{PAGE[view]}</div>
+      </div>
+    </div>
+  </>;
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>

@@ -1,0 +1,25 @@
+{
+  "name": "nextra-cso-hub",
+  "version": "1.0.0",
+  "description": "Nextra CSO Hub - Customer Success & Operations",
+  "main": "server.js",
+  "scripts": {
+    "start": "node startup.js",
+    "dev": "node startup.js"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.2.0",
+    "@fastify/helmet": "^13.0.2",
+    "@fastify/rate-limit": "^11.0.0",
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^16.4.5",
+    "fastify": "^5.8.5",
+    "ioredis": "^5.3.2",
+    "jsonwebtoken": "^9.0.2",
+    "pg": "^8.11.3",
+    "zod": "^3.23.8"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
