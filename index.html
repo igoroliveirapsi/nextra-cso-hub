@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Nextra CSO Hub — v1.1</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/recharts@2.8.0/umd/Recharts.js"></script>
+  <style>
+    :root {
+      --p: #6D40E6;
+      --pd: #5030C6;
+      --pbg: #F8F6FF;
+      --bg: #FAFAF9;
+      --dark: #1A1730;
+      --dark2: #2D1B4E;
+      --mid: #6B6990;
+      --ink: #2D2536;
+      --line: #E4E0F5;
+      --muted: #9B94B3;
+      --red: #DC2626;
+      --ok: #10B981;
+      --warn: #F59E0B;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system,'Inter',sans-serif; }
+    html, body { width: 100%; height: 100%; background: var(--dark); color: var(--ink); }
+    #root { width: 100%; height: 100%; }
+    .app-container { display: flex; width: 100vw; height: 100vh; }
+    .sidebar { width: 280px; background: var(--dark2); color: #fff; overflow-y: auto; padding: 24px 0; border-right: 1px solid rgba(255,255,255,.1); }
+    .sidebar-section { padding: 0 16px; margin-bottom: 24px; }
+    .sidebar-label { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: rgba(255,255,255,.5); margin-bottom: 8px; display: block; }
+    .sidebar-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; font-size: 14px; color: rgba(255,255,255,.7); transition: .12s; position: relative; }
+    .sidebar-item:hover { background: rgba(255,255,255,.1); color: #fff; }
+    .sidebar-item.active { background: var(--p); color: #fff; font-weight: 600; }
+    .sidebar-badge { position: absolute; right: 8px; background: var(--red); color: #fff; font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 4px; min-width: 20px; text-align: center; }
+    .main-area { flex: 1; display: flex; flex-direction: column; background: var(--bg); overflow: hidden; }
+    .header { padding: 20px 28px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; background: #fff; }
+    .header-title { font-size: 18px; font-weight: 700; color: var(--dark); }
+    .header-sub { font-size: 12px; color: var(--mid); margin-top: 2px; }
+    .user-badge { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--pbg); border-radius: 8px; }
+    .user-badge span { font-size: 12px; font-weight: 600; color: var(--pd); }
+    .content { flex: 1; overflow-y: auto; padding: 20px; }
+    .section-grid { display: grid; gap: 20px; }
+    .alert-card { background: #fff; border-radius: 12px; padding: 16px; display: flex; gap: 12px; align-items: flex-start; border-left: 4px solid var(--warn); box-shadow: 0 1px 3px rgba(0,0,0,.08); cursor: pointer; transition: .15s; }
+    .alert-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,.12); }
+    .alert-icon { font-size: 20px; flex-shrink: 0; margin-top: 2px; }
+    .alert-body { flex: 1; }
+    .alert-title { font-size: 13px; font-weight: 700; color: var(--dark); }
+    .alert-desc { font-size: 12px; color: var(--mid); margin-top: 2px; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; text-transform: uppercase; }
+    .badge-critical { background: rgba(220,38,38,.1); color: var(--red); }
+    .badge-high { background: rgba(245,158,11,.1); color: #D97706; }
+    .badge-medium { background: rgba(59,130,246,.1); color: #3B82F6; }
+    .badge-low { background: rgba(16,185,129,.1); color: var(--ok); }
+    .btn { padding: 10px 16px; border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: .12s; outline: none; }
+    .btn-purple { background: var(--p); color: #fff; }
+    .btn-purple:hover { background: var(--pd); }
+    .btn-purple:disabled { opacity: .4; cursor: not-allowed; }
+    .btn-outline { border: 1px solid var(--line); background: #fff; color: var(--mid); }
+    .btn-outline:hover { border-color: var(--p); color: var(--p); }
+    .btn-sm { padding: 6px 12px; font-size: 12px; }
+    .table-container { background: #fff; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+    .table { width: 100%; border-collapse: collapse; }
+    .table th { background: var(--bg); padding: 12px 16px; text-align: left; font-size: 11px; font-weight: 700; color: var(--mid); text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid var(--line); }
+    .table td { padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--ink); }
+    .table tr:hover { background: var(--pbg); }
+    .modal { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: flex; align-items: center; justify-content: center; z: 1000; padding: 20px; }
+    .modal-content { background: #fff; border-radius: 16px; max-width: 600px; width: 100%; max-height: 85vh; overflow-y: auto; box-shadow: 0 20px 60px rgba(0,0,0,.2); }
+    .modal-hdr { padding: 24px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: flex-start; }
+    .modal-title { font-size: 16px; font-weight: 700; color: var(--dark); }
+    .modal-sub { font-size: 12px; color: var(--mid); margin-top: 4px; }
+    .close-btn { background: none; border: none; font-size: 24px; color: var(--muted); cursor: pointer; padding: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
+    .close-btn:hover { color: var(--dark); }
+    .modal-body { padding: 24px; }
+    .modal-footer { padding: 20px 24px; border-top: 1px solid var(--line); display: flex; gap: 12px; justify-content: flex-end; }
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--mid); margin-bottom: 6px; }
+    .form-input { width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 13px; color: var(--ink); background: #fff; outline: none; transition: .12s; font-family: inherit; }
+    .form-input:focus { border-color: var(--p); box-shadow: 0 0 0 3px var(--pbg); }
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .form-row-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; }
+    textarea.form-input { resize: vertical; min-height: 80px; line-height: 1.5; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .checkbox-item { display: flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; font-size: 12px; background: #fff; transition: .12s; }
+    .checkbox-item input { display: none; }
+    .checkbox-item input:checked + label { display: none; }
+    .checkbox-item input:checked ~ label:after { content: ' ✓'; color: var(--p); }
+    .checkbox-item input:checked { border-color: var(--p); background: var(--pbg); }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #fff; padding: 14px 18px; border-radius: 8px; font-size: 12px; box-shadow: 0 4px 12px rgba(0,0,0,.15); z: 999; animation: slideIn .3s ease-out; }
+    @keyframes slideIn { from { transform: translateY(100px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    .toast.success { border-left: 3px solid var(--ok); color: #065F46; }
+    .toast.error { border-left: 3px solid var(--red); color: #7F1D1D; }
+    .toast.info { border-left: 3px solid var(--p); color: var(--pd); }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .metric-card { background: linear-gradient(135deg, var(--pbg) 0%, #fff 100%); border-radius: 12px; padding: 18px; border: 1px solid var(--line); }
+    .metric-label { font-size: 11px; font-weight: 700; text-transform: uppercase; color: var(--mid); letter-spacing: .05em; }
+    .metric-value { font-size: 24px; font-weight: 700; color: var(--dark); margin-top: 6px; }
+    .metric-sub { font-size: 12px; color: var(--mid); margin-top: 4px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(109,64,230,.25); border-top-color: var(--p); border-radius: 50%; animation: spin .6s linear infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+const { useState, useEffect, useCallback, useContext, createContext } = React;
+const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = window.Recharts || {};
+
+// ══════════════════════════════════════════════════════════════
+// HELPERS & CONTEXT
+// ══════════════════════════════════════════════════════════════
+
+const API_BASE = '/api/v1';
+const TOKEN = localStorage.getItem('token');
+
+const api = async (path, method='GET', body=null) => {
+  const opts = { method, headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API_BASE + path, opts);
+  if (r.status === 401) { localStorage.clear(); window.location.href = '/'; }
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.message || `HTTP ${r.status}`);
+  }
+  return r.json();
+};
+
+const getUser = () => { const d = localStorage.getItem('user'); return d ? JSON.parse(d) : null; };
+
+const formatCPF = (v) => v.replace(/\D/g, '').replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/g, '$1.$2.$3/$4-$5');
+const formatMoney = (v) => `R$ ${(parseFloat(v)||0).toLocaleString('pt-BR', {minimumFractionDigits:2, maximumFractionDigits:2})}`;
+const formatPhone = (v) => v.replace(/\D/g, '').replace(/(\d{2})(\d{4,5})(\d{4})/g, '($1) $2-$3');
+
+const AppContext = createContext();
+
+// ══════════════════════════════════════════════════════════════
+// LOGIN SCREEN
+// ══════════════════════════════════════════════════════════════
+
+function LoginScreen() {
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!login || !password) { setErr('Preencha login e senha.'); return; }
+    setBusy(true); setErr('');
+    try {
+      const { token, user } = await api('/auth/login', 'POST', { login, password });
+      localStorage.setItem('token', token);
+      localStorage.setItem('user', JSON.stringify(user));
+      window.location.reload();
+    } catch(e) { setErr(e.message||'Erro de login'); }
+    finally { setBusy(false); }
+  };
+
+  return <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'linear-gradient(135deg, var(--dark) 0%, var(--dark2) 100%)' }}>
+    <form onSubmit={submit} style={{ background: '#fff', borderRadius: '16px', padding: '32px', maxWidth: '360px', width: '100%', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}>
+      <div style={{ marginBottom: '24px' }}>
+        <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--dark)', marginBottom: '4px' }}>📋 Nextra CSO Hub</div>
+        <div style={{ fontSize: '12px', color: 'var(--mid)' }}>Customer Success & Operations</div>
+      </div>
+      {err && <div style={{ background: '#FEF2F2', color: 'var(--red)', padding: '10px 12px', borderRadius: '8px', fontSize: '12px', marginBottom: '16px' }}>{err}</div>}
+      <div style={{ marginBottom: '16px' }}>
+        <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--mid)', marginBottom: '6px' }}>Login</label>
+        <input type="text" value={login} onChange={e=>setLogin(e.target.value)} placeholder="seu login" style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '8px', fontSize: '13px' }} />
+      </div>
+      <div style={{ marginBottom: '20px' }}>
+        <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', textTransform: 'uppercase', color: 'var(--mid)', marginBottom: '6px' }}>Senha</label>
+        <input type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="sua senha" style={{ width: '100%', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '8px', fontSize: '13px' }} />
+      </div>
+      <button type="submit" className="btn btn-purple" style={{ width: '100%' }} disabled={busy}>
+        {busy && <span className="spinner" style={{ marginRight: '6px' }} />}
+        Entrar
+      </button>
+    </form>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════
+// DASHBOARD EXECUTIVO (TORRE DE CONTROLE)
+// ══════════════════════════════════════════════════════════════
+
+function DashboardExecutivo({ onViewTicket, onViewComplaint }) {
+  const [kpis, setKpis] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const { tickets_by_status, tickets_by_area, revenue_at_risk, rma_by_status, complaints_by_type } = await api('/dashboard/reports?period=7');
+        setKpis({ tickets_by_status, tickets_by_area, revenue_at_risk, rma_by_status, complaints_by_type });
+      } catch(e) { console.error(e); }
+      finally { setLoading(false); }
+    })();
+  }, []);
+
+  if (loading) return <div style={{ padding: '20px', textAlign: 'center' }}>Carregando...</div>;
+
+  const openTickets = (kpis?.tickets_by_status||[]).find(s => s.status === 'new')?.count || 0;
+  const criticalTickets = (kpis?.tickets_by_area||[]).reduce((s, a) => s + (a.area === 'support' ? a.count : 0), 0);
+  const totalRevAtRisk = (kpis?.revenue_at_risk||[]).reduce((s, c) => s + c.total, 0);
+  const openRMAs = (kpis?.rma_by_status||[]).find(r => r.status === 'requested')?.count || 0;
+
+  return <div className="section-grid">
+    <div className="grid-3">
+      <div className="metric-card">
+        <div className="metric-label">🔔 Chamados Abertos</div>
+        <div className="metric-value">{openTickets}</div>
+        <div className="metric-sub">últimos 7 dias</div>
+      </div>
+      <div className="metric-card">
+        <div className="metric-label">🔴 SLA Crítico</div>
+        <div className="metric-value" style={{ color: 'var(--red)' }}>{criticalTickets}</div>
+        <div className="metric-sub">próximas 24h</div>
+      </div>
+      <div className="metric-card">
+        <div className="metric-label">💰 Receita em Risco</div>
+        <div className="metric-value" style={{ fontSize: '18px' }}>{formatMoney(totalRevAtRisk)}</div>
+        <div className="metric-sub">{(kpis?.revenue_at_risk||[]).length} clientes</div>
+      </div>
+    </div>
+    
+    {kpis?.tickets_by_status && kpis.tickets_by_status.length > 0 && (
+      <div className="table-container">
+        <div style={{ padding: '16px', borderBottom: '1px solid var(--line)', fontSize: '13px', fontWeight: '700', color: 'var(--dark)' }}>Distribuição de Chamados por Status (últimos 7 dias)</div>
+        <ResponsiveContainer width="100%" height={250}>
+          <BarChart data={kpis.tickets_by_status}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--line)" />
+            <XAxis dataKey="status" stroke="var(--mid)" style={{ fontSize: '12px' }} />
+            <YAxis stroke="var(--mid)" style={{ fontSize: '12px' }} />
+            <Tooltip contentStyle={{ background: '#fff', border: '1px solid var(--line)', borderRadius: '8px', fontSize: '12px' }} />
+            <Bar dataKey="count" fill="var(--p)" radius={[8,8,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+    )}
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════
+// CHAMADOS (TICKETS)
+// ══════════════════════════════════════════════════════════════
+
+function TicketsView() {
+  const [tickets, setTickets] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [openCreateModal, setOpenCreateModal] = useState(false);
+  const [selectedTicket, setSelectedTicket] = useState(null);
+
+  useEffect(() => {
+    loadTickets();
+  }, []);
+
+  const loadTickets = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api('/tickets');
+      setTickets(data || []);
+    } catch(e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  return <div className="section-grid">
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div className="header-title">📋 Chamados</div>
+        <div className="header-sub">{tickets.length} chamados registrados</div>
+      </div>
+      <button className="btn btn-purple" onClick={() => setOpenCreateModal(true)}>+ Novo Chamado</button>
+    </div>
+
+    <div className="table-container">
+      <table className="table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Cliente</th>
+            <th>Tipo</th>
+            <th>Criticidade</th>
+            <th>Status</th>
+            <th>SLA</th>
+            <th>Ações</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tickets.map(t => (
+            <tr key={t.id}>
+              <td style={{ fontSize: '11px', fontFamily: 'monospace', fontWeight: '600' }}>{t.id}</td>
+              <td>{t.client_name}</td>
+              <td>{t.occurrence_type}</td>
+              <td><span className={`badge badge-${t.criticality}`}>{t.criticality}</span></td>
+              <td>{t.status}</td>
+              <td><span className={`badge ${t.sla_state === 'overdue' ? 'badge-critical' : 'badge-low'}`}>{t.sla_state}</span></td>
+              <td><button className="btn btn-sm btn-outline" onClick={() => setSelectedTicket(t)}>Ver</button></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+
+    {openCreateModal && <CreateTicketModal onClose={() => setOpenCreateModal(false)} onCreated={() => { loadTickets(); setOpenCreateModal(false); }} />}
+    {selectedTicket && <TicketDetailModal ticket={selectedTicket} onClose={() => setSelectedTicket(null)} />}
+  </div>;
+}
+
+function CreateTicketModal({ onClose, onCreated, toast }) {
+  const [f, setF] = useState({
+    business_unit_id: 'led', client_name: '', cnpj: '', channel: 'whatsapp',
+    occurrence_type: 'technical_support', criticality: 'medium',
+    area_responsible: 'support', notify_areas: [],
+    product: '', serial_number: '', order_number: '', nf_number: '',
+    order_value: '', revenue_at_risk: '', description: '', expectation: '', previous_action: '',
+    am_user_id: '', bdm_user_id: '', is_vip: false, is_recurrence: false
+  });
+  const [users, setUsers] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+
+  useEffect(() => {
+    (async () => {
+      try { const u = await api('/users/lookup?role=sales'); setUsers(u); } catch(e) { console.error(e); }
+    })();
+  }, []);
+
+  const areas = [
+    { v: 'support', l: 'Suporte Técnico' },
+    { v: 'operations', l: 'Operações/CD' },
+    { v: 'sales', l: 'Comercial' },
+    { v: 'purchasing', l: 'Compras' },
+    { v: 'warehouse', l: 'CD/Estoque' },
+    { v: 'fiscal', l: 'Fiscal' },
+    { v: 'rma', l: 'RMA' },
+    { v: 'financial', l: 'Financeiro' },
+  ];
+
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const toggleArea = a => setF(p => ({ ...p, notify_areas: p.notify_areas.includes(a) ? p.notify_areas.filter(x => x !== a) : [...p.notify_areas, a] }));
+
+  const runAI = async () => {
+    if (!f.description || f.description.length < 10) return;
+    setAiLoading(true);
+    try {
+      const { result } = await api('/ai/triage', 'POST', {
+        client_name: f.client_name, business_unit_id: f.business_unit_id,
+        product: f.product, description: f.description,
+        expectation: f.expectation, previous_action: f.previous_action
+      });
+      setAiResult(result);
+    } catch(e) { console.error(e); }
+    finally { setAiLoading(false); }
+  };
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!f.client_name.trim() || !f.description.trim() || f.description.length < 10) return;
+    setBusy(true);
+    try {
+      const p = { ...f, order_value: f.order_value ? parseFloat(f.order_value) : null, revenue_at_risk: f.revenue_at_risk ? parseFloat(f.revenue_at_risk) : 0 };
+      await api('/tickets', 'POST', p);
+      onCreated();
+    } catch(e) { alert(e.message); }
+    finally { setBusy(false); }
+  };
+
+  const inp = { width: '100%', padding: '10px 12px', border: '1px solid var(--line)', borderRadius: '8px', fontSize: '13px', color: 'var(--ink)', background: '#fff', outline: 'none', fontFamily: 'inherit' };
+
+  return <div className="modal" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-content">
+      <div className="modal-hdr">
+        <div><div className="modal-title">📋 Abrir Chamado</div><div className="modal-sub">Registrar nova ocorrência de pós-venda</div></div>
+        <button className="close-btn" onClick={onClose}>×</button>
+      </div>
+      <form onSubmit={submit} style={{ padding: '24px' }}>
+        {/* SEÇÃO 1 — IDENTIFICAÇÃO */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '10px' }}>Identificação</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+            <div><label className="form-label">BU *</label><select style={inp} value={f.business_unit_id} onChange={e=>set('business_unit_id',e.target.value)}><option value="led">LED / PRO AV</option><option value="av">Áudio e Vídeo</option><option value="seg">Segurança Eletrônica</option><option value="cab">Cabeamento</option></select></div>
+            <div><label className="form-label">Canal *</label><select style={inp} value={f.channel} onChange={e=>set('channel',e.target.value)}><option value="whatsapp">WhatsApp</option><option value="email">E-mail</option><option value="phone">Telefone</option><option value="sales">Comercial</option><option value="portal">Portal</option></select></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '12px' }}>
+            <div><label className="form-label">Cliente *</label><input style={inp} value={f.client_name} onChange={e=>set('client_name',e.target.value)} placeholder="Nome do cliente ou empresa"/></div>
+            <div><label className="form-label">CNPJ</label><input style={inp} value={f.cnpj} onChange={e=>set('cnpj',formatCPF(e.target.value))} placeholder="00.000.000/0000-00"/></div>
+          </div>
+          <div style={{ marginTop: '10px', display: 'flex', gap: '20px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', color: 'var(--mid)', cursor: 'pointer' }}><input type="checkbox" checked={f.is_vip} onChange={e=>set('is_vip',e.target.checked)}/> ⭐ Cliente VIP</label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', color: 'var(--mid)', cursor: 'pointer' }}><input type="checkbox" checked={f.is_recurrence} onChange={e=>set('is_recurrence',e.target.checked)}/> ↩ Recorrência</label>
+          </div>
+        </div>
+
+        {/* SEÇÃO 2 — PRODUCT & EQUIPE */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '10px' }}>Produto e Equipe</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+            <div><label className="form-label">Produto</label><input style={inp} value={f.product} onChange={e=>set('product',e.target.value)} placeholder="Módulo P3, Painel..."/></div>
+            <div><label className="form-label">Nº de Série</label><input style={inp} value={f.serial_number} onChange={e=>set('serial_number',e.target.value)} placeholder="SN-XXXXXX"/></div>
+            <div><label className="form-label">AM (Account Manager)</label><select style={inp} value={f.am_user_id} onChange={e=>set('am_user_id',e.target.value)}><option value="">— Nenhum —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div><label className="form-label">BDM (Desenvolvimento de Negócios)</label><select style={inp} value={f.bdm_user_id} onChange={e=>set('bdm_user_id',e.target.value)}><option value="">— Nenhum —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+          </div>
+        </div>
+
+        {/* SEÇÃO 3 — PEDIDO & VALORES */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '10px' }}>Pedido e Valores</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+            <div><label className="form-label">Nº Pedido</label><input style={inp} value={f.order_number} onChange={e=>set('order_number',e.target.value)} placeholder="PED-00000"/></div>
+            <div><label className="form-label">Nº NF</label><input style={inp} value={f.nf_number} onChange={e=>set('nf_number',e.target.value)} placeholder="NF-00000"/></div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div><label className="form-label">Valor do Pedido (R$)</label><input style={inp} type="number" step="0.01" value={f.order_value} onChange={e=>set('order_value',e.target.value)} placeholder="0.00"/></div>
+            <div><label className="form-label">Receita em Risco (R$)</label><input style={inp} type="number" step="0.01" value={f.revenue_at_risk} onChange={e=>set('revenue_at_risk',e.target.value)} placeholder="0.00"/></div>
+          </div>
+        </div>
+
+        {/* SEÇÃO 4 — DESCRIÇÃO + IA */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+            <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em' }}>Descrição da Ocorrência</span>
+            <button type="button" onClick={runAI} disabled={aiLoading || !f.description || f.description.length < 10} style={{ padding: '6px 14px', background: 'var(--dark2)', border: 'none', borderRadius: '8px', color: '#fff', fontSize: '12px', fontWeight: '700', cursor: 'pointer', opacity: (!f.description || f.description.length < 10) ? 0.35 : 1 }}>
+              {aiLoading ? <><span className="spinner" style={{ marginRight: '6px' }} />Analisando...</> : <>✦ Triagem por IA</>}
+            </button>
+          </div>
+          <div><label className="form-label">Descrição completa *</label><textarea style={{...inp,minHeight:'76px',resize:'vertical',lineHeight:'1.5'}} value={f.description} onChange={e=>set('description',e.target.value)} placeholder="O que aconteceu, quando, como o cliente reportou..."/></div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '10px' }}>
+            <div><label className="form-label">Expectativa do Cliente</label><textarea style={{...inp,minHeight:'52px',resize:'vertical',lineHeight:'1.5'}} value={f.expectation} onChange={e=>set('expectation',e.target.value)} placeholder="O que o cliente espera como resolução?"/></div>
+            <div><label className="form-label">Ação Já Tentada</label><textarea style={{...inp,minHeight:'52px',resize:'vertical',lineHeight:'1.5'}} value={f.previous_action} onChange={e=>set('previous_action',e.target.value)} placeholder="O que já foi feito para resolver?"/></div>
+          </div>
+          {aiResult && (
+            <div style={{ marginTop: '12px', padding: '14px', background: 'rgba(109,64,230,.07)', border: '1px solid var(--pb)', borderRadius: '9px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em' }}>✦ Análise da IA</span>
+                <button type="button" onClick={() => { setF(p=>({...p,occurrence_type:aiResult.occurrence_type||p.occurrence_type,criticality:aiResult.criticality||p.criticality,notify_areas:Array.isArray(aiResult.notify_areas)?aiResult.notify_areas:p.notify_areas})); setAiResult(null); }} style={{ padding: '5px 12px', background: 'var(--p)', border: 'none', borderRadius: '6px', color: '#fff', fontSize: '11px', fontWeight: '700', cursor: 'pointer' }}>Aplicar ao Formulário →</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '10px' }}>
+                <div><span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase' }}>Tipo sugerido</span><p style={{ fontSize: '12px', color: 'var(--dark)', marginTop: '2px', lineHeight: '1.5' }}>{aiResult.occurrence_type}</p></div>
+                <div><span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase' }}>Criticidade</span><p style={{ fontSize: '12px', color: 'var(--dark)', marginTop: '2px', lineHeight: '1.5' }}>{aiResult.criticality}</p></div>
+                <div><span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase' }}>Causa Raiz Hipótese</span><p style={{ fontSize: '12px', color: 'var(--dark)', marginTop: '2px', lineHeight: '1.5' }}>{aiResult.root_cause_hypothesis}</p></div>
+                <div><span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase' }}>Próximos Passos</span><p style={{ fontSize: '12px', color: 'var(--dark)', marginTop: '2px', lineHeight: '1.5' }}>{aiResult.next_steps}</p></div>
+              </div>
+              {aiResult.client_communication && (
+                <div style={{ background: '#fff', borderRadius: '7px', padding: '10px', borderLeft: '3px solid var(--p)' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: '4px' }}>💬 Rascunho — Primeira resposta ao cliente</span>
+                  <p style={{ fontSize: '12px', color: 'var(--mid)', lineHeight: '1.6', whiteSpace: 'pre-wrap', fontStyle: 'italic' }}>{aiResult.client_communication}</p>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* SEÇÃO 5 — CLASSIFICAÇÃO */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px', marginBottom: '12px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '10px' }}>Classificação</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+            <div><label className="form-label">Tipo de Ocorrência *</label><select style={inp} value={f.occurrence_type} onChange={e=>set('occurrence_type',e.target.value)}><option value="technical_support">Suporte Técnico</option><option value="complaint">Reclamação de Cliente</option><option value="rma">RMA / Defeito de Produto</option><option value="operational_problem">Problema Operacional</option><option value="delivery_problem">Atraso de Entrega</option><option value="incomplete_order">Pedido Incompleto / Incorreto</option><option value="warranty">Solicitação de Garantia</option><option value="exchange_return">Troca / Devolução</option><option value="billing_issue">Problema Fiscal</option><option value="other">Outro</option></select></div>
+            <div><label className="form-label">Criticidade *</label><select style={inp} value={f.criticality} onChange={e=>set('criticality',e.target.value)}><option value="critical">🔴 Crítica — SLA 8h</option><option value="high">🟠 Alta — SLA 24h</option><option value="medium">🟡 Média — SLA 48h</option><option value="low">🟢 Baixa — SLA 96h</option></select></div>
+          </div>
+          <div style={{ marginTop: '12px' }}><label className="form-label">Área Responsável *</label><select style={inp} value={f.area_responsible} onChange={e=>set('area_responsible',e.target.value)}>{areas.map(a=><option key={a.v} value={a.v}>{a.l}</option>)}</select></div>
+        </div>
+
+        {/* SEÇÃO 6 — EQUIPES A NOTIFICAR */}
+        <div style={{ background: 'var(--bg)', borderRadius: '9px', padding: '14px' }}>
+          <div style={{ fontSize: '11px', fontWeight: '700', color: 'var(--pd)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: '10px' }}>Equipes a Notificar</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {areas.map(a=><label key={a.v} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '7px 13px', borderRadius: '8px', border: `1.5px solid ${f.notify_areas.includes(a.v)?'var(--p)':'var(--line)'}`, background: f.notify_areas.includes(a.v)?'var(--pbg)':'#fff', cursor: 'pointer', fontSize: '12px', fontWeight: f.notify_areas.includes(a.v)?700:400, color: f.notify_areas.includes(a.v)?'var(--pd)':'var(--mid)', transition: '.12s', userSelect: 'none' }}>
+              <input type="checkbox" style={{ display: 'none' }} checked={f.notify_areas.includes(a.v)} onChange={()=>{}}/>
+              <span onClick={() => { const na = f.notify_areas.includes(a.v) ? f.notify_areas.filter(x=>x!==a.v) : [...f.notify_areas, a.v]; set('notify_areas', na); }} style={{ cursor: 'pointer', width: '100%' }}>{f.notify_areas.includes(a.v)?'✓ ':''}{a.l}</span>
+            </label>)}
+          </div>
+          <p style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '8px' }}>As equipes selecionadas serão notificadas sobre este chamado.</p>
+        </div>
+
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--line)' }}>
+          <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
+          <button type="submit" className="btn btn-purple" disabled={busy}>{busy && <span className="spinner" style={{ marginRight: '6px' }} />}✓ Abrir Chamado</button>
+        </div>
+      </form>
+    </div>
+  </div>;
+}
+
+function TicketDetailModal({ ticket, onClose }) {
+  return <div className="modal" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-content">
+      <div className="modal-hdr">
+        <div><div className="modal-title">{ticket.id}</div><div className="modal-sub">{ticket.client_name}</div></div>
+        <button className="close-btn" onClick={onClose}>×</button>
+      </div>
+      <div style={{ padding: '24px' }}>
+        <div className="grid-2">
+          <div><span className="form-label">Status</span><p style={{ fontSize: '14px', fontWeight: '600', marginTop: '4px' }}>{ticket.status}</p></div>
+          <div><span className="form-label">Criticidade</span><p style={{ fontSize: '14px', fontWeight: '600', marginTop: '4px' }}><span className={`badge badge-${ticket.criticality}`}>{ticket.criticality}</span></p></div>
+          <div><span className="form-label">Tipo</span><p style={{ fontSize: '14px', fontWeight: '600', marginTop: '4px' }}>{ticket.occurrence_type}</p></div>
+          <div><span className="form-label">Área Responsável</span><p style={{ fontSize: '14px', fontWeight: '600', marginTop: '4px' }}>{ticket.area_responsible}</p></div>
+        </div>
+        <div style={{ marginTop: '16px' }}>
+          <span className="form-label">Descrição</span>
+          <p style={{ fontSize: '13px', color: 'var(--mid)', marginTop: '6px', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>{ticket.description}</p>
+        </div>
+        {ticket.revenue_at_risk > 0 && (
+          <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(220,38,38,.1)', borderRadius: '8px', borderLeft: '3px solid var(--red)' }}>
+            <span className="form-label" style={{ color: 'var(--red)' }}>Receita em Risco</span>
+            <p style={{ fontSize: '16px', fontWeight: '700', color: 'var(--red)', marginTop: '4px' }}>{formatMoney(ticket.revenue_at_risk)}</p>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>;
+}
+
+// ══════════════════════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════════════════════
+
+function App() {
+  const [view, setView] = useState('dashboard');
+  const user = getUser();
+
+  if (!user) return <LoginScreen />;
+
+  const navItems = [
+    { id: 'dashboard', label: 'Dashboard Executivo', icon: '📊', section: 'VISÃO' },
+    { id: 'torre', label: 'Torre de Controle', icon: '🚨', badge: 3 },
+    { id: 'tickets', label: 'Chamados', icon: '📋', badge: 9 },
+    { id: 'complaints', label: 'Reclamações', icon: '⚠️', badge: 5 },
+    { id: 'returns', label: 'Devoluções', icon: '📦', badge: 6 },
+    { id: 'rma', label: 'RMA', icon: '🔧' },
+    { id: 'clients360', label: 'Cliente 360', icon: '👁️', section: 'CLIENTES' },
+    { id: 'health', label: 'Health Score', icon: '❤️' },
+    { id: 'csat', label: 'CSAT / NPS', icon: '⭐' },
+    { id: 'recovery', label: 'Planos de Recuperação', icon: '🎯' },
+    { id: 'reports', label: 'Relatórios', icon: '📈', section: 'GESTÃO' },
+    { id: 'settings', label: 'Configurações', icon: '⚙️' },
+  ];
+
+  return <div className="app-container">
+    <div className="sidebar">
+      <div className="sidebar-section">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', marginBottom: '16px' }}>
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--p)' }}></div>
+          <div style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>Nextra CSO Hub</div>
+          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,.5)', marginLeft: 'auto' }}>v1.1</div>
+        </div>
+      </div>
+
+      {navItems.map(item => (
+        item.section ? (
+          <div key={item.id} className="sidebar-label">{item.section}</div>
+        ) : (
+          <div key={item.id} className="sidebar-item" style={{ background: view === item.id ? 'var(--p)' : 'transparent', color: view === item.id ? '#fff' : 'rgba(255,255,255,.7)' }} onClick={() => setView(item.id)}>
+            <span>{item.icon}</span>
+            <span style={{ flex: 1 }}>{item.label}</span>
+            {item.badge && <div className="sidebar-badge">{item.badge}</div>}
+          </div>
+        )
+      ))}
+
+      <div className="sidebar-section" style={{ marginTop: '24px', paddingTop: '24px', borderTop: '1px solid rgba(255,255,255,.1)' }}>
+        <div className="sidebar-item" onClick={() => { localStorage.clear(); window.location.href = '/'; }}>
+          <span>🚪</span>
+          <span>Sair</span>
+        </div>
+      </div>
+    </div>
+
+    <div className="main-area">
+      <div className="header">
+        <div>
+          <div className="header-title">{navItems.find(i => i.id === view)?.label}</div>
+          <div className="header-sub">Últimas ações • {new Date().toLocaleDateString('pt-BR')}</div>
+        </div>
+        <div className="user-badge">
+          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--p)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700' }}>{user.name.charAt(0)}</div>
+          <span>{user.name}</span>
+        </div>
+      </div>
+
+      <div className="content">
+        {view === 'dashboard' && <DashboardExecutivo />}
+        {view === 'tickets' && <TicketsView />}
+        {view === 'complaints' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Reclamações — Em desenvolvimento</div>}
+        {view === 'returns' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Devoluções — Em desenvolvimento</div>}
+        {view === 'rma' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>RMA — Em desenvolvimento</div>}
+        {view === 'clients360' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Cliente 360 — Em desenvolvimento</div>}
+        {view === 'health' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Health Score — Em desenvolvimento</div>}
+        {view === 'csat' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>CSAT / NPS — Em desenvolvimento</div>}
+        {view === 'recovery' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Planos de Recuperação — Em desenvolvimento</div>}
+        {view === 'reports' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Relatórios — Em desenvolvimento</div>}
+        {view === 'settings' && <div style={{ fontSize: '14px', color: 'var(--mid)' }}>Configurações — Em desenvolvimento</div>}
+      </div>
+    </div>
+  </div>;
+}
+
+ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
