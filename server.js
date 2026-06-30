@@ -222,7 +222,7 @@ load();
     }));
 
     v1.get('/config/complaint-types', async () => {
-      const { rows } = await db.query('SELECT * FROM complaint_type_config ORDER BY label').catch(() => ({ rows: [] }));
+      const { rows } = await db.query('SELECT * FROM complaint_type_config ORDER BY sort_order, label_pt').catch(() => ({ rows: [] }));
       return rows;
     });
 
@@ -1256,39 +1256,41 @@ Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois:
 
     v1.get('/dashboard/reports', { preHandler: [authenticate] }, async (req) => {
       const days = parseInt((req.query||{}).period||'30');
+      const safe = (q) => q.catch(() => ({ rows: [] }));
       const [byStatus,byArea,byType,retByStatus,csatByClient,revRisk,rmaByStatus,
              returnsSavings,rmaFinancial,rmaRecurrence,complaintsByCausingArea,
              amPerformance,clientRiskList,npsTrend,slaByArea,agingBuckets,channelDist,
              returnsRootCause,topComplaintClients] = await Promise.all([
-        db.query(`SELECT status, COUNT(*)::int AS count FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`),
-        db.query(`SELECT area_responsible AS area, COUNT(*)::int AS count, COALESCE(SUM(revenue_at_risk),0) AS revenue_at_risk FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY area_responsible ORDER BY count DESC`),
-        db.query(`SELECT type_key AS type, COUNT(*)::int AS count FROM complaints WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY type_key ORDER BY count DESC`),
-        db.query(`SELECT status, COUNT(*)::int AS count FROM returns WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`),
-        db.query(`SELECT cl.name, ROUND(AVG(cs.score),1) AS csat_avg, COUNT(cs.id)::int AS responses FROM csat cs LEFT JOIN clients cl ON cl.id=cs.client_id WHERE cs.collection_date>=CURRENT_DATE-${days} GROUP BY cl.name ORDER BY csat_avg ASC LIMIT 10`),
-        db.query(`SELECT cl.name, SUM(t.revenue_at_risk) AS total FROM tickets t LEFT JOIN clients cl ON cl.id=t.client_id WHERE t.revenue_at_risk>0 AND t.status NOT IN ('closed') GROUP BY cl.name ORDER BY total DESC LIMIT 8`),
-        db.query(`SELECT status, COUNT(*)::int AS count FROM rma WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`),
-        db.query(`SELECT * FROM view_returns_savings`).catch(()=>({rows:[]})),
-        db.query(`SELECT * FROM view_rma_financial`).catch(()=>({rows:[]})),
-        db.query(`SELECT * FROM view_rma_recurrence LIMIT 10`).catch(()=>({rows:[]})),
-        db.query(`SELECT causing_area, COUNT(*)::int AS count FROM complaints WHERE causing_area IS NOT NULL AND created_at>=NOW()-INTERVAL '${days} days' GROUP BY causing_area ORDER BY count DESC`),
-        db.query(`
+        safe(db.query(`SELECT status, COUNT(*)::int AS count FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`)),
+        safe(db.query(`SELECT area_responsible AS area, COUNT(*)::int AS count, COALESCE(SUM(revenue_at_risk),0) AS revenue_at_risk FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY area_responsible ORDER BY count DESC`)),
+        safe(db.query(`SELECT type_key AS type, COUNT(*)::int AS count FROM complaints WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY type_key ORDER BY count DESC`)),
+        safe(db.query(`SELECT status, COUNT(*)::int AS count FROM returns WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`)),
+        // csat/nps/health_score ainda não existem no schema (Lote F/G) — falham isoladas até lá.
+        safe(db.query(`SELECT cl.name, ROUND(AVG(cs.score),1) AS csat_avg, COUNT(cs.id)::int AS responses FROM csat cs LEFT JOIN clients cl ON cl.id=cs.client_id WHERE cs.collection_date>=CURRENT_DATE-${days} GROUP BY cl.name ORDER BY csat_avg ASC LIMIT 10`)),
+        safe(db.query(`SELECT cl.name, SUM(t.revenue_at_risk) AS total FROM tickets t LEFT JOIN clients cl ON cl.id=t.client_id WHERE t.revenue_at_risk>0 AND t.status NOT IN ('closed') GROUP BY cl.name ORDER BY total DESC LIMIT 8`)),
+        safe(db.query(`SELECT status, COUNT(*)::int AS count FROM rma WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY status ORDER BY count DESC`)),
+        safe(db.query(`SELECT * FROM view_returns_savings`)),
+        safe(db.query(`SELECT * FROM view_rma_financial`)),
+        safe(db.query(`SELECT * FROM view_rma_recurrence LIMIT 10`)),
+        safe(db.query(`SELECT causing_area, COUNT(*)::int AS count FROM complaints WHERE causing_area IS NOT NULL AND created_at>=NOW()-INTERVAL '${days} days' GROUP BY causing_area ORDER BY count DESC`)),
+        safe(db.query(`
           SELECT u.id, u.name, COUNT(t.id)::int AS tickets_managed,
             COALESCE(SUM(t.revenue_at_risk) FILTER (WHERE t.status NOT IN ('closed')),0) AS open_revenue_at_risk,
             ROUND(AVG(EXTRACT(EPOCH FROM (t.resolved_at-t.created_at))/3600) FILTER (WHERE t.resolved_at IS NOT NULL),1) AS avg_resolution_hours
           FROM users u LEFT JOIN tickets t ON t.am_user_id=u.id
-          WHERE u.role IN ('sales','operations') GROUP BY u.id,u.name HAVING COUNT(t.id) > 0 ORDER BY tickets_managed DESC LIMIT 10`),
-        db.query(`SELECT id,name,health_score,health_status,segment FROM clients WHERE health_score < 60 AND is_active=TRUE ORDER BY health_score ASC LIMIT 15`),
-        db.query(`SELECT TO_CHAR(DATE_TRUNC('week',collection_date),'DD/MM') AS week, ROUND(AVG(CASE WHEN score>=9 THEN 100 WHEN score>=7 THEN 0 ELSE -100 END))::int AS nps_score FROM nps WHERE collection_date>=NOW()-INTERVAL '${days} days' GROUP BY DATE_TRUNC('week',collection_date) ORDER BY 1`),
-        db.query(`SELECT area_responsible AS area, COUNT(*) FILTER (WHERE sla_state='overdue')::int AS overdue, COUNT(*) FILTER (WHERE sla_state NOT IN ('overdue'))::int AS on_time FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY area_responsible`),
-        db.query(`SELECT
+          WHERE u.role IN ('sales','operations') GROUP BY u.id,u.name HAVING COUNT(t.id) > 0 ORDER BY tickets_managed DESC LIMIT 10`)),
+        safe(db.query(`SELECT id,name,health_score,health_status,segment FROM clients WHERE health_score < 60 AND is_active=TRUE ORDER BY health_score ASC LIMIT 15`)),
+        safe(db.query(`SELECT TO_CHAR(DATE_TRUNC('week',collection_date),'DD/MM') AS week, ROUND(AVG(CASE WHEN score>=9 THEN 100 WHEN score>=7 THEN 0 ELSE -100 END))::int AS nps_score FROM nps WHERE collection_date>=NOW()-INTERVAL '${days} days' GROUP BY DATE_TRUNC('week',collection_date) ORDER BY 1`)),
+        safe(db.query(`SELECT area_responsible AS area, COUNT(*) FILTER (WHERE sla_state='overdue')::int AS overdue, COUNT(*) FILTER (WHERE sla_state NOT IN ('overdue'))::int AS on_time FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY area_responsible`)),
+        safe(db.query(`SELECT
             COUNT(*) FILTER (WHERE NOW()-created_at < INTERVAL '1 day')::int AS d0_1,
             COUNT(*) FILTER (WHERE NOW()-created_at BETWEEN INTERVAL '1 day' AND INTERVAL '3 days')::int AS d1_3,
             COUNT(*) FILTER (WHERE NOW()-created_at BETWEEN INTERVAL '3 days' AND INTERVAL '7 days')::int AS d3_7,
             COUNT(*) FILTER (WHERE NOW()-created_at > INTERVAL '7 days')::int AS d7_plus
-          FROM tickets WHERE status NOT IN ('closed')`),
-        db.query(`SELECT channel, COUNT(*)::int AS count FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY channel ORDER BY count DESC`),
-        db.query(`SELECT root_cause, COUNT(*)::int AS count FROM returns WHERE root_cause IS NOT NULL AND created_at>=NOW()-INTERVAL '${days} days' GROUP BY root_cause ORDER BY count DESC`),
-        db.query(`SELECT cl.name, COUNT(c.id)::int AS complaint_count FROM complaints c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.created_at>=NOW()-INTERVAL '${days} days' GROUP BY cl.name ORDER BY complaint_count DESC LIMIT 8`),
+          FROM tickets WHERE status NOT IN ('closed')`)),
+        safe(db.query(`SELECT channel, COUNT(*)::int AS count FROM tickets WHERE created_at>=NOW()-INTERVAL '${days} days' GROUP BY channel ORDER BY count DESC`)),
+        safe(db.query(`SELECT root_cause, COUNT(*)::int AS count FROM returns WHERE root_cause IS NOT NULL AND created_at>=NOW()-INTERVAL '${days} days' GROUP BY root_cause ORDER BY count DESC`)),
+        safe(db.query(`SELECT cl.name, COUNT(c.id)::int AS complaint_count FROM complaints c LEFT JOIN clients cl ON cl.id=c.client_id WHERE c.created_at>=NOW()-INTERVAL '${days} days' GROUP BY cl.name ORDER BY complaint_count DESC LIMIT 8`)),
       ]);
       return { period_days:days, tickets_by_status:byStatus.rows, tickets_by_area:byArea.rows,
         complaints_by_type:byType.rows, returns_by_status:retByStatus.rows,
