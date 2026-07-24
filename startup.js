@@ -38,7 +38,13 @@ async function startup() {
 
   // 3. Servidor
   console.log('[3/3] Iniciando servidor...\n');
-  require('./server.js');
+  const { buildApp } = require('./server.js');
+  const port = parseInt(process.env.PORT || '3001');
+  const host = process.env.HOST || '0.0.0.0';
+  const app = await buildApp();
+  await app.listen({ port, host });
+  console.log(`🚀 Nextra CSO Hub rodando em http://${host}:${port}`);
+  console.log(`   /health  →  http://${host}:${port}/health\n`);
 }
 
 startup().catch(e => { console.error('Startup falhou:', e); process.exit(1); });
