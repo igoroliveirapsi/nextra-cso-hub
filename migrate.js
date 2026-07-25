@@ -14,6 +14,7 @@ const MIGRATIONS = [
   '008_tickets_missing_columns.sql',
   '009_report_views.sql',
   '010_operational_flow_enhancements.sql',
+  '011_v2_upgrade.sql',
 ];
 
 async function migrate() {

@@ -33,6 +33,103 @@ const JWT_EXPIRES = process.env.JWT_EXPIRES_IN || '8h';
 const signToken   = (payload) => jwt.sign({ ...payload, jti: crypto.randomUUID() }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 const verifyToken = (token)   => jwt.verify(token, JWT_SECRET);
 
+// ── v2.0: E-mail via Resend API (fetch nativo — zero dependência) ──
+// Configure RESEND_API_KEY (e opcionalmente EMAIL_FROM) no Railway para ativar.
+async function sendEmail(to, subject, html) {
+  const key = process.env.RESEND_API_KEY;
+  if (!key) return { sent: false, reason: 'E-mail não configurado (defina RESEND_API_KEY no Railway).' };
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: process.env.EMAIL_FROM || 'Nextra CSO Hub <onboarding@resend.dev>', to: [to], subject, html }),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); return { sent: false, reason: e.message || `HTTP ${r.status}` }; }
+    return { sent: true };
+  } catch (e) { return { sent: false, reason: e.message }; }
+}
+
+// ── v2.0: Notificações in-app ──────────────────────────────────
+async function notifyUsers(userIds, type, message, ticketId = null, linkView = null) {
+  const ids = [...new Set((userIds || []).filter(Boolean))];
+  for (const uid of ids) {
+    await db.query(
+      `INSERT INTO notifications (user_id, ticket_id, type, message, link_view) VALUES ($1,$2,$3,$4,$5)`,
+      [uid, ticketId, type, message, linkView]
+    ).catch(() => {});
+  }
+}
+async function notifyAdmins(type, message, ticketId = null, linkView = null) {
+  const { rows } = await db.query(`SELECT id FROM users WHERE role='admin' AND COALESCE(is_active,TRUE)`).catch(() => ({ rows: [] }));
+  await notifyUsers(rows.map(r => r.id), type, message, ticketId, linkView);
+}
+
+// ── v2.0: Validação de CNPJ (servidor) ─────────────────────────
+function isValidCNPJSrv(raw) {
+  const c = String(raw || '').replace(/\D/g, '');
+  if (c.length !== 14 || /^(\d)\1{13}$/.test(c)) return false;
+  const calc = (len) => {
+    const w = len === 12 ? [5,4,3,2,9,8,7,6,5,4,3,2] : [6,5,4,3,2,9,8,7,6,5,4,3,2];
+    let s = 0; for (let i = 0; i < len; i++) s += parseInt(c[i]) * w[i];
+    const r = s % 11; return r < 2 ? 0 : 11 - r;
+  };
+  return calc(12) === parseInt(c[12]) && calc(13) === parseInt(c[13]);
+}
+
+// ── v2.0: SLA em horas ÚTEIS (business_hours + holidays) ───────
+// Caminha dia a dia consumindo apenas janelas de expediente. Se as tabelas
+// estiverem vazias/indisponíveis, cai no comportamento antigo (horas corridas).
+async function computeSlaDeadline(hours) {
+  try {
+    const [bh, hol] = await Promise.all([
+      db.query(`SELECT day_of_week, start_time, end_time FROM business_hours WHERE is_active AND business_unit_id IS NULL`),
+      db.query(`SELECT date FROM holidays`),
+    ]);
+    if (!bh.rows.length) return new Date(Date.now() + hours * 3600000);
+    const byDow = {};
+    for (const r of bh.rows) byDow[r.day_of_week] = r; // 1 janela por dia (padrão)
+    const holidays = new Set(hol.rows.map(r => new Date(r.date).toISOString().slice(0, 10)));
+    let remaining = Math.round(hours * 60); // minutos úteis restantes
+    let cursor = new Date();
+    for (let guard = 0; guard < 400 && remaining > 0; guard++) {
+      const dayKey = cursor.toISOString().slice(0, 10);
+      const win = byDow[cursor.getDay()];
+      if (!win || holidays.has(dayKey)) { // dia sem expediente → pula para o próximo, 00:00
+        cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0); continue;
+      }
+      const [sh, sm] = String(win.start_time).split(':').map(Number);
+      const [eh, em] = String(win.end_time).split(':').map(Number);
+      const start = new Date(cursor); start.setHours(sh, sm, 0, 0);
+      const end   = new Date(cursor); end.setHours(eh, em, 0, 0);
+      const from = cursor > start ? cursor : start;
+      if (from >= end) { cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0); continue; }
+      const capacity = Math.floor((end - from) / 60000);
+      if (remaining <= capacity) return new Date(from.getTime() + remaining * 60000);
+      remaining -= capacity;
+      cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0);
+    }
+    return new Date(Date.now() + hours * 3600000); // fallback de segurança
+  } catch { return new Date(Date.now() + hours * 3600000); }
+}
+
+// ── v2.0: Varredura de SLA — o fix do bug de "overdue" ─────────
+// Antes, um chamado só virava 'overdue' quando alguém mexia nele. Esta
+// varredura roda no boot e a cada 5 min, marcando estourados e notificando.
+async function slaSweep() {
+  try {
+    const { rows } = await db.query(`
+      UPDATE tickets SET sla_state='overdue', updated_at=NOW()
+      WHERE sla_deadline < NOW() AND sla_state='ok' AND status NOT IN ('closed','resolved')
+      RETURNING id, client_name, am_user_id, created_by_user_id`);
+    for (const t of rows) {
+      const msg = `⏰ SLA ESTOURADO: chamado ${t.id} (${t.client_name || 'cliente não informado'}) ultrapassou o prazo.`;
+      await notifyUsers([t.am_user_id, t.created_by_user_id], 'sla_overdue', msg, t.id, 'tickets');
+      await notifyAdmins('sla_overdue', msg, t.id, 'tickets');
+    }
+  } catch (e) { console.error('slaSweep:', e.message); }
+}
+
 // ── Auth middleware ────────────────────────────────────────────
 async function authenticate(req, reply) {
   const auth = req.headers.authorization || '';
@@ -108,6 +205,7 @@ async function buildApp() {
   const app = Fastify({
     logger: { level: process.env.NODE_ENV === 'production' ? 'warn' : 'info' },
     trustProxy: true,
+    bodyLimit: 15 * 1024 * 1024, // v2.0: uploads de anexos (base64) até ~10MB reais
   });
 
   await app.register(helmet, { contentSecurityPolicy: false });
@@ -361,6 +459,237 @@ load();
       return { counts, migrations: migs };
     });
 
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — ANEXOS (armazenados no Postgres; sobrevivem a redeploy)
+    // ═══════════════════════════════════════════════════════════
+    const ATTACH_TYPES = ['ticket','return','rma','complaint'];
+    const MAX_ATTACH = 10 * 1024 * 1024; // 10MB por arquivo
+
+    v1.post('/attachments/:etype/:eid', { preHandler: [authenticate] }, async (req, reply) => {
+      const { etype, eid } = req.params;
+      if (!ATTACH_TYPES.includes(etype)) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Tipo de entidade inválido.', status:400 });
+      const d = req.body || {};
+      if (!d.filename || !d.data_base64) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'filename e data_base64 obrigatórios.', status:400 });
+      let buf;
+      try { buf = Buffer.from(d.data_base64, 'base64'); } catch { return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Base64 inválido.', status:400 }); }
+      if (!buf.length) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Arquivo vazio.', status:400 });
+      if (buf.length > MAX_ATTACH) return reply.code(400).send({ error:'FILE_TOO_LARGE', message:'Arquivo excede 10MB.', status:400 });
+      const user = getUser(req);
+      const { rows:[a] } = await db.query(
+        `INSERT INTO attachments (entity_type,entity_id,filename,mime,size_bytes,data,uploaded_by)
+         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,entity_type,entity_id,filename,mime,size_bytes,created_at`,
+        [etype, String(eid), String(d.filename).slice(0,255), d.mime||'application/octet-stream', buf.length, buf, user.sub]);
+      return reply.code(201).send(a);
+    });
+
+    v1.get('/attachments/:etype/:eid', { preHandler: [authenticate] }, async (req, reply) => {
+      const { etype, eid } = req.params;
+      if (!ATTACH_TYPES.includes(etype)) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Tipo de entidade inválido.', status:400 });
+      const { rows } = await db.query(
+        `SELECT a.id,a.filename,a.mime,a.size_bytes,a.created_at,u.name AS uploaded_by_name
+         FROM attachments a LEFT JOIN users u ON u.id=a.uploaded_by
+         WHERE a.entity_type=$1 AND a.entity_id=$2 ORDER BY a.created_at DESC`, [etype, String(eid)]);
+      return rows;
+    });
+
+    v1.get('/attachments/file/:id', { preHandler: [authenticate] }, async (req, reply) => {
+      const { rows:[a] } = await db.query(`SELECT filename,mime,data FROM attachments WHERE id=$1`, [req.params.id]);
+      if (!a) return send404(reply);
+      return reply
+        .header('Content-Type', a.mime || 'application/octet-stream')
+        .header('Content-Disposition', `attachment; filename="${encodeURIComponent(a.filename)}"`)
+        .send(a.data);
+    });
+
+    v1.delete('/attachments/:id', { preHandler: [authenticate] }, async (req, reply) => {
+      const user = getUser(req);
+      const { rows:[a] } = await db.query(`SELECT uploaded_by FROM attachments WHERE id=$1`, [req.params.id]);
+      if (!a) return send404(reply);
+      if (user.role !== 'admin' && a.uploaded_by !== user.sub)
+        return reply.code(403).send({ error:'FORBIDDEN', message:'Apenas o autor do upload ou um admin pode excluir.', status:403 });
+      await db.query(`DELETE FROM attachments WHERE id=$1`, [req.params.id]);
+      return { deleted: true };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — CATÁLOGO DE PRODUTOS (fim do produto em texto livre)
+    // ═══════════════════════════════════════════════════════════
+    v1.get('/products', { preHandler: [authenticate] }, async (req) => {
+      const q = (req.query.q || '').trim();
+      const params = []; let where = 'WHERE p.is_active';
+      if (q) { params.push(`%${q}%`); where += ` AND (p.name ILIKE $1 OR p.code ILIKE $1 OR p.model ILIKE $1)`; }
+      const { rows } = await db.query(
+        `SELECT p.*, s.name AS supplier_name FROM product_catalog p
+         LEFT JOIN suppliers s ON s.id=p.supplier_id ${where} ORDER BY p.name LIMIT 200`, params);
+      return rows;
+    });
+
+    v1.post('/products', { preHandler: [authorize('admin','manager')] }, async (req, reply) => {
+      const d = req.body || {};
+      if (!d.name || !String(d.name).trim()) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Nome do produto é obrigatório.', status:400 });
+      try {
+        const { rows:[p] } = await db.query(
+          `INSERT INTO product_catalog (name,code,model,category,business_unit_id,supplier_id,warranty_months)
+           VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+          [String(d.name).trim(), d.code||null, d.model||null, d.category||null, d.business_unit_id||'led',
+           d.supplier_id||null, parseInt(d.warranty_months)||12]);
+        return reply.code(201).send(p);
+      } catch(e) {
+        if (String(e.message).includes('unique')) return reply.code(409).send({ error:'DUPLICATE', message:'Já existe um produto com esse código.', status:409 });
+        return reply.code(400).send({ error:'CREATE_FAILED', message:e.message, status:400 });
+      }
+    });
+
+    v1.patch('/products/:id', { preHandler: [authorize('admin','manager')] }, async (req, reply) => {
+      const d = req.body || {};
+      const allowed = ['name','code','model','category','supplier_id','warranty_months','is_active'];
+      const sets = [], vals = [];
+      for (const k of allowed) if (k in d) { vals.push(d[k]); sets.push(`${k}=$${vals.length}`); }
+      if (!sets.length) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Nada para atualizar.', status:400 });
+      vals.push(req.params.id);
+      const { rows:[p] } = await db.query(`UPDATE product_catalog SET ${sets.join(',')}, updated_at=NOW() WHERE id=$${vals.length} RETURNING *`, vals);
+      if (!p) return send404(reply);
+      return p;
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — IMPORTAÇÃO EM MASSA (a "integração de pobre": CSV)
+    // Frontend envia JSON já parseado; servidor valida e deduplica.
+    // ═══════════════════════════════════════════════════════════
+    v1.post('/import/clients', { preHandler: [authorize('admin','manager')] }, async (req, reply) => {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (!rows.length) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Envie rows: [{name, cnpj, city, state, segment}].', status:400 });
+      if (rows.length > 2000) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Máximo de 2000 linhas por importação.', status:400 });
+      let inserted = 0, skipped = 0, invalid = 0; const errors = [];
+      for (const [i, r] of rows.entries()) {
+        const name = String(r.name || '').trim();
+        const cnpjRaw = String(r.cnpj || '').replace(/\D/g, '');
+        if (!name) { invalid++; if (errors.length < 10) errors.push(`Linha ${i+1}: nome vazio`); continue; }
+        if (cnpjRaw && !isValidCNPJSrv(cnpjRaw)) { invalid++; if (errors.length < 10) errors.push(`Linha ${i+1}: CNPJ inválido (${r.cnpj})`); continue; }
+        const cnpjFmt = cnpjRaw ? cnpjRaw.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5') : null;
+        const res = await db.query(
+          `INSERT INTO clients (name,cnpj,city,state,segment,primary_bu)
+           VALUES ($1,$2,$3,$4,$5,'led')
+           ON CONFLICT (cnpj) DO NOTHING RETURNING id`,
+          [name, cnpjFmt, r.city||null, (r.state||'').slice(0,2)||null, r.segment||null]).catch(e => { if (errors.length < 10) errors.push(`Linha ${i+1}: ${e.message}`); return { rows: [] }; });
+        if (res.rows.length) inserted++; else skipped++;
+      }
+      return { inserted, skipped_duplicates: skipped, invalid, errors };
+    });
+
+    v1.post('/import/products', { preHandler: [authorize('admin','manager')] }, async (req, reply) => {
+      const rows = Array.isArray(req.body?.rows) ? req.body.rows : [];
+      if (!rows.length) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Envie rows: [{name, code, model, category, warranty_months}].', status:400 });
+      if (rows.length > 2000) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Máximo de 2000 linhas por importação.', status:400 });
+      let inserted = 0, skipped = 0, invalid = 0; const errors = [];
+      for (const [i, r] of rows.entries()) {
+        const name = String(r.name || '').trim();
+        if (!name) { invalid++; if (errors.length < 10) errors.push(`Linha ${i+1}: nome vazio`); continue; }
+        const res = await db.query(
+          `INSERT INTO product_catalog (name,code,model,category,business_unit_id,warranty_months)
+           VALUES ($1,$2,$3,$4,'led',$5)
+           ON CONFLICT (code) DO NOTHING RETURNING id`,
+          [name, r.code ? String(r.code).trim() : null, r.model||null, r.category||null, parseInt(r.warranty_months)||12]
+        ).catch(e => { if (errors.length < 10) errors.push(`Linha ${i+1}: ${e.message}`); return { rows: [] }; });
+        if (res.rows.length) inserted++; else skipped++;
+      }
+      return { inserted, skipped_duplicates: skipped, invalid, errors };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — BUSCA GLOBAL (CNPJ, NF, serial, produto, cliente...)
+    // ═══════════════════════════════════════════════════════════
+    v1.get('/search', { preHandler: [authenticate] }, async (req, reply) => {
+      const q = (req.query.q || '').trim();
+      if (q.length < 2) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Informe ao menos 2 caracteres.', status:400 });
+      const like = `%${q}%`;
+      const safe = (p) => p.catch(() => ({ rows: [] }));
+      const [clients, tickets, returns, rmas, complaints] = await Promise.all([
+        safe(db.query(`SELECT id,name,cnpj,risk_level FROM clients WHERE name ILIKE $1 OR cnpj ILIKE $1 ORDER BY name LIMIT 6`, [like])),
+        safe(db.query(`SELECT id,client_name,status,criticality,nf_number,product_name_snap FROM tickets
+                       WHERE id ILIKE $1 OR client_name ILIKE $1 OR nf_number ILIKE $1 OR product_name_snap ILIKE $1 OR serial_number_snap ILIKE $1
+                       ORDER BY created_at DESC LIMIT 6`, [like])),
+        safe(db.query(`SELECT id,status,product_name_snap,nf_number FROM returns
+                       WHERE product_name_snap ILIKE $1 OR nf_number ILIKE $1 OR CAST(id AS TEXT)=$2
+                       ORDER BY created_at DESC LIMIT 6`, [like, q])),
+        safe(db.query(`SELECT id,status,product_name,serial_number FROM rma
+                       WHERE product_name ILIKE $1 OR serial_number ILIKE $1 OR product_code ILIKE $1 OR CAST(id AS TEXT)=$2
+                       ORDER BY created_at DESC LIMIT 6`, [like, q])),
+        safe(db.query(`SELECT c.id,c.status,c.severity,cl.name AS client_name FROM complaints c
+                       LEFT JOIN clients cl ON cl.id=c.client_id
+                       WHERE cl.name ILIKE $1 OR c.description ILIKE $1 ORDER BY c.created_at DESC LIMIT 6`, [like])),
+      ]);
+      return { clients: clients.rows, tickets: tickets.rows, returns: returns.rows, rma: rmas.rows, complaints: complaints.rows };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — NOTIFICAÇÕES IN-APP (sino no topo)
+    // ═══════════════════════════════════════════════════════════
+    v1.get('/notifications', { preHandler: [authenticate] }, async (req) => {
+      const user = getUser(req);
+      const [items, unread] = await Promise.all([
+        db.query(`SELECT id,type,message,ticket_id,link_view,is_read,created_at FROM notifications
+                  WHERE user_id=$1 ORDER BY created_at DESC LIMIT 30`, [user.sub]),
+        db.query(`SELECT COUNT(*)::int AS n FROM notifications WHERE user_id=$1 AND NOT is_read`, [user.sub]),
+      ]);
+      return { unread: unread.rows[0].n, items: items.rows };
+    });
+
+    v1.patch('/notifications/:id/read', { preHandler: [authenticate] }, async (req, reply) => {
+      const user = getUser(req);
+      const { rows } = await db.query(`UPDATE notifications SET is_read=TRUE, read_at=NOW() WHERE id=$1 AND user_id=$2 RETURNING id`, [req.params.id, user.sub]);
+      if (!rows.length) return send404(reply);
+      return { read: true };
+    });
+
+    v1.patch('/notifications/read-all', { preHandler: [authenticate] }, async (req) => {
+      const user = getUser(req);
+      await db.query(`UPDATE notifications SET is_read=TRUE, read_at=NOW() WHERE user_id=$1 AND NOT is_read`, [user.sub]);
+      return { read: true };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — CONTADORES REAIS DO MENU (fim dos badges chumbados)
+    // ═══════════════════════════════════════════════════════════
+    v1.get('/menu-counts', { preHandler: [authenticate] }, async () => {
+      const safe = (p) => p.catch(() => ({ rows: [{ n: 0 }] }));
+      const [torre, tickets, complaints, returns_, rma_] = await Promise.all([
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM tickets WHERE status NOT IN ('closed','resolved') AND (criticality='critical' OR (sla_state NOT IN ('done','paused') AND sla_deadline < NOW()))`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM tickets WHERE status NOT IN ('closed','resolved')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM complaints WHERE status NOT IN ('closed','resolved','sanada')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM returns WHERE status NOT IN ('completed','rejected','closed')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM rma WHERE status NOT IN ('closed','completed')`)),
+      ]);
+      return { torre: torre.rows[0].n, tickets: tickets.rows[0].n, complaints: complaints.rows[0].n, returns: returns_.rows[0].n, rma: rma_.rows[0].n };
+    });
+
+    // ═══════════════════════════════════════════════════════════
+    // v2.0 — DISPARO DE PESQUISA CSAT/NPS POR E-MAIL
+    // ═══════════════════════════════════════════════════════════
+    v1.post('/survey-links/:id/send', { preHandler: [authenticate] }, async (req, reply) => {
+      const email = String(req.body?.email || '').trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'E-mail inválido.', status:400 });
+      const { rows:[link] } = await db.query(
+        `SELECT sl.*, c.name AS client_name FROM survey_links sl LEFT JOIN clients c ON c.id=sl.client_id WHERE sl.id=$1`, [req.params.id]);
+      if (!link) return send404(reply);
+      const base = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.headers.host}`;
+      const url = `${base}/survey/${link.token}`;
+      const isNps = link.survey_type === 'nps';
+      const result = await sendEmail(email,
+        isNps ? 'Nextra — Sua opinião vale muito (1 minuto)' : 'Nextra — Como foi seu atendimento?',
+        `<div style="font-family:Arial,sans-serif;max-width:520px;margin:auto;padding:24px">
+           <h2 style="color:#1a1a2e">Olá${link.client_name ? ', ' + link.client_name : ''}!</h2>
+           <p>${isNps ? 'De 0 a 10, o quanto você recomendaria a Nextra?' : 'Queremos saber como foi sua experiência com nosso atendimento.'}</p>
+           <p>Leva menos de 1 minuto:</p>
+           <p style="text-align:center;margin:28px 0">
+             <a href="${url}" style="background:#e94560;color:#fff;padding:12px 28px;border-radius:8px;text-decoration:none;font-weight:bold">Responder pesquisa</a>
+           </p>
+           <p style="font-size:12px;color:#888">Se o botão não funcionar, copie e cole este link: ${url}</p>
+         </div>`);
+      if (!result.sent) return reply.code(400).send({ error:'EMAIL_NOT_SENT', message: result.reason, status:400 });
+      return { sent: true, to: email };
+    });
+
     v1.post('/admin/wipe-demo-data', { preHandler: [authorize('admin')] }, async (req, reply) => {
       const { confirm } = req.body || {};
       if (confirm !== 'APAGAR')
@@ -480,7 +809,7 @@ load();
       const { rows: [{nextval}] } = await db.query("SELECT nextval('ticket_seq') AS nextval");
       const ticketId = `CSO-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${String(nextval).padStart(4,'0')}`;
       const slaHours = { critical:8, high:24, medium:48, low:96 }[d.criticality||'medium']||48;
-      const slaDeadline = new Date(Date.now() + slaHours*3600000);
+      const slaDeadline = await computeSlaDeadline(slaHours); // v2.0: horas ÚTEIS (business_hours + holidays)
       const notifyAreas = Array.isArray(d.notify_areas) ? d.notify_areas : (typeof d.notify_areas==='string' && d.notify_areas ? d.notify_areas.split(',').filter(Boolean) : []);
       try {
         const { rows:[ticket] } = await db.query(`
@@ -1020,19 +1349,38 @@ load();
       if (!d.product_name || !d.defect_description) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'product_name e defect_description obrigatórios.', status:400 });
       const user = getUser(req);
       try {
+        // v2.0: garantia calculada a partir do catálogo (warranty_months) + data de compra
+        const prodId = d.product_id ? parseInt(d.product_id) : null;
+        let warrantyState = null, supplierFromCatalog = null;
+        if (prodId) {
+          const { rows: [p] } = await db.query(`SELECT warranty_months, supplier_id FROM product_catalog WHERE id=$1`, [prodId]);
+          if (p) {
+            supplierFromCatalog = p.supplier_id;
+            if (d.purchase_date) {
+              const exp = new Date(d.purchase_date);
+              exp.setMonth(exp.getMonth() + (p.warranty_months || 12));
+              warrantyState = exp >= new Date() ? 'in_warranty' : 'out_of_warranty';
+            }
+          }
+        }
         const { rows:[r] } = await db.query(`
           INSERT INTO rma (client_id,business_unit_id,ticket_id,product_name,product_code,
-            serial_number,defect_description,warranty,unit_cost,supplier_id,responsible_user_id,created_by_user_id)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+            serial_number,defect_description,warranty,unit_cost,supplier_id,responsible_user_id,created_by_user_id,
+            product_id,purchase_date,warranty_state)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
           [d.client_id||null,d.business_unit_id||'led',d.ticket_id||null,d.product_name,
            d.product_code||null,d.serial_number||null,d.defect_description,
-           d.warranty||false,d.unit_cost||null,d.supplier_id||null,d.responsible_user_id||user.sub,user.sub]);
+           d.warranty !== undefined ? d.warranty : (warrantyState === 'in_warranty'),
+           d.unit_cost||null,d.supplier_id||supplierFromCatalog||null,d.responsible_user_id||user.sub,user.sub,
+           prodId, d.purchase_date||null, warrantyState]);
         await db.query(`INSERT INTO rma_history (rma_id,user_id,action,new_status) VALUES ($1,$2,'rma_criado','requested')`,
           [r.id, user.sub]);
-        // Detecta recorrência automaticamente
-        const { rows: rec } = await db.query(
-          `SELECT COUNT(*)::int AS cnt FROM rma WHERE COALESCE(product_code,product_name)=COALESCE($1,$2) AND id != $3`,
-          [d.product_code||null, d.product_name, r.id]);
+        // Detecta recorrência: por product_id (dado limpo) com fallback para código/nome
+        const { rows: rec } = prodId
+          ? await db.query(`SELECT COUNT(*)::int AS cnt FROM rma WHERE product_id=$1 AND id != $2`, [prodId, r.id])
+          : await db.query(
+              `SELECT COUNT(*)::int AS cnt FROM rma WHERE COALESCE(product_code,product_name)=COALESCE($1,$2) AND id != $3`,
+              [d.product_code||null, d.product_name, r.id]);
         return reply.code(201).send({ ...r, is_recurrence: rec[0].cnt > 0, recurrence_count: rec[0].cnt });
       } catch(e) {
         return reply.code(400).send({ error:'CREATE_FAILED', message:e.message, status:400 });
@@ -1048,9 +1396,11 @@ load();
          FROM rma r LEFT JOIN clients cl ON cl.id=r.client_id LEFT JOIN suppliers sp ON sp.id=r.supplier_id WHERE r.id=$1`, [req.params.id]);
       if (!rows.length) return send404(reply);
       const rma = rows[0];
-      const { rows: rec } = await db.query(
-        `SELECT id,status,created_at FROM rma WHERE COALESCE(product_code,product_name)=COALESCE($1,$2) AND id != $3 ORDER BY created_at DESC`,
-        [rma.product_code, rma.product_name, rma.id]);
+      const { rows: rec } = rma.product_id
+        ? await db.query(`SELECT id,status,created_at FROM rma WHERE product_id=$1 AND id != $2 ORDER BY created_at DESC`, [rma.product_id, rma.id])
+        : await db.query(
+            `SELECT id,status,created_at FROM rma WHERE COALESCE(product_code,product_name)=COALESCE($1,$2) AND id != $3 ORDER BY created_at DESC`,
+            [rma.product_code, rma.product_name, rma.id]);
       rma.related_recurrences = rec;
       return rma;
     });
@@ -1606,7 +1956,7 @@ Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois:
       try {
         const [critical, overdue, noOwner, pendingApproval, critComp, blockedRet, stuckRma, noUpdate] = await Promise.all([
           db.query(`SELECT id,client_name,status,criticality,sla_state,description,revenue_at_risk,created_at FROM tickets WHERE criticality='critical' AND status NOT IN ('closed') ORDER BY created_at LIMIT 20`),
-          db.query(`SELECT id,client_name,status,criticality,sla_state,description,sla_deadline FROM tickets WHERE sla_state='overdue' AND status NOT IN ('closed') ORDER BY sla_deadline LIMIT 20`),
+          db.query(`SELECT id,client_name,status,criticality,sla_state,description,sla_deadline FROM tickets WHERE status NOT IN ('closed','resolved') AND sla_state NOT IN ('done','paused') AND sla_deadline < NOW() ORDER BY sla_deadline LIMIT 20`),
           db.query(`SELECT id,client_name,status,description,created_at FROM tickets WHERE status='new' ORDER BY created_at LIMIT 20`),
           db.query(`SELECT id,client_name,status,approval_status,description,created_at FROM tickets WHERE status='resolved' AND approval_status='pending' ORDER BY created_at LIMIT 20`),
           db.query(`SELECT id,client_id,type_key,severity,status,reason AS description,loss_risk,created_at FROM complaints WHERE severity='critical' AND status NOT IN ('closed','cancelled') ORDER BY created_at LIMIT 10`),
@@ -1694,6 +2044,12 @@ Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois:
     }
     reply.code(500).send({ error:'INTERNAL_ERROR', message:'Erro interno do servidor.', status:500 });
   });
+
+  // v2.0: varredura de SLA — no boot e a cada 5 minutos
+  if (process.env.NODE_ENV !== 'test') {
+    slaSweep();
+    setInterval(slaSweep, 5 * 60 * 1000).unref();
+  }
 
   return app;
 }

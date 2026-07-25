@@ -124,7 +124,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-const { useState, useEffect, useCallback, useContext, createContext } = React;
+const { useState, useEffect, useCallback, useContext, createContext, useRef } = React;
 const { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } = window.Recharts || {};
 
 // ══════════════════════════════════════════════════════════════
@@ -147,6 +147,148 @@ const api = async (path, method='GET', body=null) => {
 };
 
 const getUser = () => { const d = localStorage.getItem('user'); return d ? JSON.parse(d) : null; };
+
+// ── v2.0: helpers de arquivo e CSV ─────────────────────────────
+const fileToBase64 = (file) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(String(r.result).split(',')[1]);
+  r.onerror = () => rej(new Error('Falha ao ler o arquivo.'));
+  r.readAsDataURL(file);
+});
+const fmtBytes = (b) => b > 1048576 ? (b/1048576).toFixed(1)+' MB' : b > 1024 ? Math.round(b/1024)+' KB' : b+' B';
+const downloadAttachment = async (id, filename) => {
+  const r = await fetch(`${API_BASE}/attachments/file/${id}`, { headers: { 'Authorization': `Bearer ${TOKEN}` } });
+  if (!r.ok) throw new Error('Falha ao baixar o anexo.');
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+};
+// Parser simples de CSV: detecta ; ou , e usa a 1ª linha como cabeçalho
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (lines.length < 2) return { headers: [], rows: [] };
+  const sep = (lines[0].match(/;/g) || []).length >= (lines[0].match(/,/g) || []).length ? ';' : ',';
+  const headers = lines[0].split(sep).map(h => h.trim().toLowerCase().replace(/"/g, ''));
+  const rows = lines.slice(1).map(l => {
+    const cells = l.split(sep).map(c => c.trim().replace(/^"|"$/g, ''));
+    const o = {}; headers.forEach((h, i) => o[h] = cells[i] || ''); return o;
+  });
+  return { headers, rows };
+}
+
+// ── v2.0: Painel de Anexos (fotos de defeito, NF em PDF, vídeos…) ──
+function AttachmentsPanel({ entityType, entityId, toast }) {
+  const [items, setItems] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const me = getUser();
+  const load = async () => { try { setItems(await api(`/attachments/${entityType}/${entityId}`)); } catch {} };
+  useEffect(() => { if (entityId) load(); }, [entityType, entityId]);
+  const onPick = async (e) => {
+    const file = e.target.files?.[0]; e.target.value = '';
+    if (!file) return;
+    if (file.size > 10 * 1048576) { toast?.('Arquivo excede 10MB.', 'error'); return; }
+    setBusy(true);
+    try {
+      const data_base64 = await fileToBase64(file);
+      await api(`/attachments/${entityType}/${entityId}`, 'POST', { filename: file.name, mime: file.type, data_base64 });
+      toast?.('Anexo enviado.');
+      await load();
+    } catch (err) { toast?.(err.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const del = async (id) => {
+    if (!window.confirm('Excluir este anexo?')) return;
+    try { await api(`/attachments/${id}`, 'DELETE'); await load(); } catch (err) { toast?.(err.message, 'error'); }
+  };
+  return <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px dashed var(--border)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+      <span style={{ fontSize: '12.5px', fontWeight: 700 }}>📎 Anexos ({items.length})</span>
+      <label className="btn btn-secondary" style={{ fontSize: '11.5px', padding: '5px 12px', cursor: busy ? 'wait' : 'pointer' }}>
+        {busy ? 'Enviando…' : '+ Anexar arquivo'}
+        <input type="file" style={{ display: 'none' }} onChange={onPick} disabled={busy} />
+      </label>
+    </div>
+    {!items.length ? <p style={{ fontSize: '11.5px', color: 'var(--muted)' }}>Nenhum anexo. Fotos do defeito, NF em PDF e vídeos fortalecem a tratativa com o fornecedor.</p> :
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
+        {items.map(a => <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '7px 10px', background: 'var(--bg)', borderRadius: '7px', fontSize: '12px' }}>
+          <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.filename}</span>
+          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{fmtBytes(a.size_bytes)}</span>
+          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{a.uploaded_by_name || ''}</span>
+          <button className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: '11px' }} onClick={() => downloadAttachment(a.id, a.filename).catch(e => toast?.(e.message, 'error'))}>⬇</button>
+          {(me?.role === 'admin') && <button className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: '11px', color: 'var(--danger, #c0392b)' }} onClick={() => del(a.id)}>✕</button>}
+        </div>)}
+      </div>}
+  </div>;
+}
+
+// ── v2.0: Busca Global (CNPJ, NF, serial, produto, cliente…) ───
+function GlobalSearch({ onNavigate }) {
+  const [q, setQ] = useState('');
+  const [res, setRes] = useState(null);
+  const [open, setOpen] = useState(false);
+  const tRef = useRef(null);
+  const run = (val) => {
+    clearTimeout(tRef.current);
+    if (val.trim().length < 2) { setRes(null); setOpen(false); return; }
+    tRef.current = setTimeout(async () => {
+      try { setRes(await api(`/search?q=${encodeURIComponent(val.trim())}`)); setOpen(true); } catch {}
+    }, 350);
+  };
+  const go = (view) => { setOpen(false); setQ(''); setRes(null); onNavigate(view); };
+  const group = (title, arr, view, render) => !arr?.length ? null :
+    <div key={title}>
+      <div style={{ fontSize: '10px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', padding: '6px 12px 2px' }}>{title}</div>
+      {arr.map((it, i) => <div key={i} onClick={() => go(view)} style={{ padding: '7px 12px', fontSize: '12px', cursor: 'pointer', borderRadius: '6px' }}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg)'} onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>{render(it)}</div>)}
+    </div>;
+  const total = res ? ['clients','tickets','returns','rma','complaints'].reduce((s, k) => s + (res[k]?.length || 0), 0) : 0;
+  return <div style={{ position: 'relative', flex: 1, maxWidth: '420px', margin: '0 20px' }}>
+    <input className="form-input" placeholder="🔍 Buscar cliente, CNPJ, NF, serial, produto…" value={q}
+      onChange={e => { setQ(e.target.value); run(e.target.value); }}
+      onFocus={() => res && setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 180)}
+      style={{ fontSize: '12.5px', padding: '8px 12px' }} />
+    {open && res && <div style={{ position: 'absolute', top: '42px', left: 0, right: 0, background: '#fff', border: '1px solid var(--border)', borderRadius: '10px', boxShadow: '0 10px 30px rgba(0,0,0,.12)', zIndex: 90, maxHeight: '380px', overflowY: 'auto', padding: '4px' }}>
+      {!total ? <p style={{ fontSize: '12px', color: 'var(--muted)', padding: '12px' }}>Nada encontrado para "{q}".</p> : <>
+        {group('Clientes', res.clients, 'clients360', c => <><b>{c.name}</b> <span style={{ color: 'var(--muted)' }}>{c.cnpj || ''}</span></>)}
+        {group('Chamados', res.tickets, 'tickets', t => <><b>{t.id}</b> — {t.client_name} <span style={{ color: 'var(--muted)' }}>({t.status})</span></>)}
+        {group('Devoluções', res.returns, 'returns', r => <><b>#{r.id}</b> — {r.product_name_snap || 'produto n/i'} <span style={{ color: 'var(--muted)' }}>NF {r.nf_number || '—'}</span></>)}
+        {group('RMA', res.rma, 'rma', r => <><b>#{r.id}</b> — {r.product_name} <span style={{ color: 'var(--muted)' }}>{r.serial_number || ''}</span></>)}
+        {group('Reclamações', res.complaints, 'complaints', c => <><b>#{c.id}</b> — {c.client_name || 'cliente n/i'} <span style={{ color: 'var(--muted)' }}>({c.severity})</span></>)}
+      </>}
+    </div>}
+  </div>;
+}
+
+// ── v2.0: Sino de notificações ─────────────────────────────────
+function NotificationBell({ onNavigate }) {
+  const [data, setData] = useState({ unread: 0, items: [] });
+  const [open, setOpen] = useState(false);
+  const load = async () => { try { setData(await api('/notifications')); } catch {} };
+  useEffect(() => { load(); const iv = setInterval(load, 60000); return () => clearInterval(iv); }, []);
+  const clickItem = async (n) => {
+    try { if (!n.is_read) await api(`/notifications/${n.id}/read`, 'PATCH'); } catch {}
+    setOpen(false); load();
+    if (n.link_view) onNavigate(n.link_view);
+  };
+  const readAll = async () => { try { await api('/notifications/read-all', 'PATCH'); load(); } catch {} };
+  return <div style={{ position: 'relative', marginRight: '14px' }}>
+    <div onClick={() => setOpen(o => !o)} style={{ position: 'relative', cursor: 'pointer', fontSize: '19px', padding: '4px' }}>🔔
+      {data.unread > 0 && <span style={{ position: 'absolute', top: '-2px', right: '-4px', background: 'var(--danger, #e94560)', color: '#fff', fontSize: '9.5px', fontWeight: 700, borderRadius: '9px', padding: '1px 5px' }}>{data.unread > 99 ? '99+' : data.unread}</span>}
+    </div>
+    {open && <div style={{ position: 'absolute', top: '36px', right: 0, width: '340px', background: '#fff', border: '1px solid var(--border)', borderRadius: '10px', boxShadow: '0 10px 30px rgba(0,0,0,.12)', zIndex: 90, maxHeight: '400px', overflowY: 'auto' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', borderBottom: '1px solid var(--border)' }}>
+        <span style={{ fontSize: '12.5px', fontWeight: 700 }}>Notificações</span>
+        {data.unread > 0 && <span onClick={readAll} style={{ fontSize: '11px', color: 'var(--p)', cursor: 'pointer' }}>marcar todas como lidas</span>}
+      </div>
+      {!data.items.length ? <p style={{ fontSize: '12px', color: 'var(--muted)', padding: '14px' }}>Sem notificações por aqui.</p> :
+        data.items.map(n => <div key={n.id} onClick={() => clickItem(n)} style={{ padding: '9px 12px', fontSize: '12px', cursor: 'pointer', background: n.is_read ? 'transparent' : 'var(--pbg, #fdf0f3)', borderBottom: '1px solid var(--border)' }}>
+          <div>{n.message}</div>
+          <div style={{ fontSize: '10.5px', color: 'var(--muted)', marginTop: '3px' }}>{new Date(n.created_at).toLocaleString('pt-BR')}</div>
+        </div>)}
+    </div>}
+  </div>;
+}
 
 const formatCPF = (v) => v.replace(/\D/g, '').replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/g, '$1.$2.$3/$4-$5');
 const formatCNPJ = formatCPF; // alias — a máscara já é a de CNPJ (14 dígitos)
@@ -1090,6 +1232,7 @@ function TicketDetailModal({ id, onClose, onChanged, toast }) {
         </>}
 
         {tab === 'history' && <>
+          <AttachmentsPanel entityType="ticket" entityId={t.id} toast={toast} />
           <Timeline items={history} />
           <div className="form-group" style={{ marginTop: '14px' }}>
             <label className="form-label">Adicionar nota interna</label>
@@ -1802,6 +1945,7 @@ function ReturnDetailModal({ id, onClose, onChanged, toast }) {
         </div>}
 
         {tab === 'history' && <>
+          <AttachmentsPanel entityType="return" entityId={r.id} toast={toast} />
           <Timeline items={r.history} />
           <div className="form-group" style={{ marginTop: '14px' }}>
             <label className="form-label">Adicionar nota interna</label>
@@ -1934,13 +2078,24 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
+  const [products, setProducts] = useState([]); // v2.0: catálogo
   const [newSupplierName, setNewSupplierName] = useState('');
   const [busy, setBusy] = useState(false);
   const [f, setF] = useState({
     client_id: '', business_unit_id: 'led', ticket_id: '', product_name: '', product_code: '',
-    serial_number: '', defect_description: '', warranty: false, unit_cost: '', supplier_id: '', responsible_user_id: ''
+    serial_number: '', defect_description: '', warranty: false, unit_cost: '', supplier_id: '', responsible_user_id: '',
+    product_id: '', purchase_date: ''
   });
   const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  useEffect(() => { (async () => { try { setProducts(await api('/products')); } catch(e) {} })(); }, []);
+  // v2.0: selecionar do catálogo preenche nome/código/fornecedor automaticamente
+  const pickProduct = (pid) => {
+    const p = products.find(x => String(x.id) === String(pid));
+    setF(prev => ({ ...prev, product_id: pid,
+      product_name: p ? p.name : prev.product_name,
+      product_code: p ? (p.code || '') : prev.product_code,
+      supplier_id: p && p.supplier_id ? String(p.supplier_id) : prev.supplier_id }));
+  };
 
   const loadSuppliers = async () => { try { const { data } = await api('/suppliers'); setSuppliers(data || []); } catch(e) {} };
   useEffect(() => { (async () => {
@@ -1969,6 +2124,8 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
         unit_cost: f.unit_cost ? parseFloat(f.unit_cost) : null,
         supplier_id: f.supplier_id ? parseInt(f.supplier_id) : null,
         responsible_user_id: f.responsible_user_id ? parseInt(f.responsible_user_id) : null,
+        product_id: f.product_id ? parseInt(f.product_id) : null,
+        purchase_date: f.purchase_date || null,
       });
       onCreated(res);
     } catch(e) { toast?.(e.message, 'error'); }
@@ -1992,6 +2149,17 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
               <select className="form-input" value={f.business_unit_id} onChange={e => set('business_unit_id', e.target.value)}>
                 <option value="led">LED</option><option value="ooh">OOH/DOOH</option><option value="rm">Retail Media</option>
               </select></div>
+          </div>
+          <div className="form-row">
+            <div className="form-group"><label className="form-label">Produto do Catálogo (recomendado)</label>
+              <select className="form-input" value={f.product_id} onChange={e => pickProduct(e.target.value)}>
+                <option value="">— digitar manualmente —</option>
+                {products.map(p => <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''} · garantia {p.warranty_months}m</option>)}
+              </select>
+              {!f.product_id && <p style={{ fontSize: '10.5px', color: 'var(--muted)', marginTop: '3px' }}>Sem catálogo, a recorrência é calculada por texto — menos confiável. Cadastre produtos em Configurações → Produtos.</p>}
+            </div>
+            <div className="form-group"><label className="form-label">Data da Compra (p/ garantia)</label>
+              <input className="form-input" type="date" value={f.purchase_date} onChange={e => set('purchase_date', e.target.value)} /></div>
           </div>
           <div className="form-row-3">
             <div className="form-group"><label className="form-label">Produto *</label><input className="form-input" value={f.product_name} onChange={e => set('product_name', e.target.value)} placeholder="Nome / modelo" /></div>
@@ -2090,7 +2258,12 @@ function RMADetailModal({ id, onClose, onChanged, toast }) {
     <div className="modal-content" style={{ maxWidth: '740px' }}>
       <div className="modal-hdr">
         <div><div className="modal-title">RMA #{r.id} — {r.product_name}</div>
-          <div className="modal-sub"><Pill>{RMA_LABEL[r.status] || r.status}</Pill> {r.warranty && <span style={{ marginLeft: '8px' }}>🛡️ Em garantia</span>}</div></div>
+          <div className="modal-sub"><Pill>{RMA_LABEL[r.status] || r.status}</Pill>
+            {r.warranty_state === 'in_warranty' && <span style={{ marginLeft: '8px', color: 'var(--green, #16a34a)', fontWeight: 700 }}>🛡️ Dentro da garantia</span>}
+            {r.warranty_state === 'out_of_warranty' && <span style={{ marginLeft: '8px', color: 'var(--red, #dc2626)', fontWeight: 700 }}>⛔ Fora da garantia</span>}
+            {!r.warranty_state && r.warranty && <span style={{ marginLeft: '8px' }}>🛡️ Em garantia</span>}
+            {r.purchase_date && <span style={{ marginLeft: '8px', fontSize: '11px', color: 'var(--muted)' }}>compra: {new Date(r.purchase_date).toLocaleDateString('pt-BR')}</span>}
+          </div></div>
         <button className="close-btn" onClick={onClose}>×</button>
       </div>
       <div className="modal-body">
@@ -2104,6 +2277,9 @@ function RMADetailModal({ id, onClose, onChanged, toast }) {
           <div><span className="form-label">Nº Série</span><p style={{ fontSize: '13px', fontWeight: 600, marginTop: '4px' }}>{r.serial_number || '—'}</p></div>
           <div><span className="form-label">Código do Produto</span><p style={{ fontSize: '13px', fontWeight: 600, marginTop: '4px' }}>{r.product_code || '—'}</p></div>
         </div>
+
+        <AttachmentsPanel entityType="rma" entityId={r.id} toast={toast} />
+
 
         {(() => { const sug = suggestRmaAction(r); return sug ? (
           <div style={{ marginBottom: '14px', padding: '12px', background: 'var(--pbg)', borderRadius: '8px', borderLeft: '3px solid var(--p)' }}>
@@ -2711,13 +2887,19 @@ function CsatNpsView({ toast }) {
     </div>}
 
     {tab === 'links' && <div className="table-container"><table className="table">
-      <thead><tr><th>Cliente</th><th>Tipo</th><th>Criado em</th><th>Respondido?</th><th>Expira em</th></tr></thead>
-      <tbody>{!links.length ? <tr><td colSpan="5" style={{textAlign:'center',padding:'20px',color:'var(--muted)'}}>Nenhum link disparado ainda.</td></tr> :
+      <thead><tr><th>Cliente</th><th>Tipo</th><th>Criado em</th><th>Respondido?</th><th>Expira em</th><th>Envio</th></tr></thead>
+      <tbody>{!links.length ? <tr><td colSpan="6" style={{textAlign:'center',padding:'20px',color:'var(--muted)'}}>Nenhum link disparado ainda.</td></tr> :
         links.map(l => <tr key={l.id}>
           <td>{l.client_name}</td><td><Pill>{(l.survey_type||'').toUpperCase()}</Pill></td>
           <td style={{fontSize:'11px',color:'var(--muted)'}}>{formatDate(l.created_at)}</td>
           <td>{l.responded ? <span style={{color:'var(--ok)',fontWeight:600}}>✓ Sim</span> : <span style={{color:'var(--muted)'}}>Aguardando</span>}</td>
           <td style={{fontSize:'11px',color:'var(--muted)'}}>{formatDate(l.expires_at)}</td>
+          <td>{!l.responded && <button className="btn btn-sm btn-outline" onClick={async () => {
+            const email = window.prompt('E-mail do destinatário:');
+            if (!email) return;
+            try { await api(`/survey-links/${l.id}/send`, 'POST', { email }); toast?.(`Pesquisa enviada para ${email}.`); }
+            catch(err) { toast?.(err.message, 'error'); }
+          }}>📧 Enviar</button>}</td>
         </tr>)}
       </tbody></table></div>}
 
@@ -3247,6 +3429,120 @@ const ROLES = [
   { v:'financial', l:'Financeiro',       desc:'Devoluções e custos' },
 ];
 
+
+// ── v2.0: Catálogo de Produtos (Configurações) ─────────────────
+function ProductsTab({ toast }) {
+  const [items, setItems] = useState([]);
+  const [suppliers, setSuppliers] = useState([]);
+  const [f, setF] = useState({ name: '', code: '', model: '', category: '', supplier_id: '', warranty_months: '12' });
+  const [busy, setBusy] = useState(false);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const load = async () => {
+    try { setItems(await api('/products')); } catch(e) { toast?.(e.message, 'error'); }
+    try { const r = await api('/suppliers'); setSuppliers(r.data || r || []); } catch(e) {}
+  };
+  useEffect(() => { load(); }, []);
+  const create = async () => {
+    if (!f.name.trim()) { toast?.('Nome do produto é obrigatório.', 'error'); return; }
+    setBusy(true);
+    try {
+      await api('/products', 'POST', { ...f, supplier_id: f.supplier_id ? parseInt(f.supplier_id) : null, warranty_months: parseInt(f.warranty_months) || 12 });
+      toast?.('Produto cadastrado.');
+      setF({ name: '', code: '', model: '', category: '', supplier_id: '', warranty_months: '12' });
+      load();
+    } catch(e) { toast?.(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  const deactivate = async (p) => {
+    if (!window.confirm(`Desativar "${p.name}"? Ele deixa de aparecer nos formulários (RMAs existentes não são afetados).`)) return;
+    try { await api(`/products/${p.id}`, 'PATCH', { is_active: false }); load(); } catch(e) { toast?.(e.message, 'error'); }
+  };
+  return <>
+    <div className="card" style={{ marginBottom: '14px' }}>
+      <p style={{ fontSize: '12.5px', fontWeight: 700, marginBottom: '10px' }}>➕ Novo produto</p>
+      <div className="form-row-3">
+        <div className="form-group"><label className="form-label">Nome *</label><input className="form-input" value={f.name} onChange={e => set('name', e.target.value)} placeholder="Módulo P3.9 Outdoor" /></div>
+        <div className="form-group"><label className="form-label">Código / SKU</label><input className="form-input" value={f.code} onChange={e => set('code', e.target.value)} placeholder="P39-OUT" /></div>
+        <div className="form-group"><label className="form-label">Modelo</label><input className="form-input" value={f.model} onChange={e => set('model', e.target.value)} /></div>
+      </div>
+      <div className="form-row-3">
+        <div className="form-group"><label className="form-label">Categoria</label><input className="form-input" value={f.category} onChange={e => set('category', e.target.value)} placeholder="Indoor, Outdoor, Rental…" /></div>
+        <div className="form-group"><label className="form-label">Fornecedor</label>
+          <select className="form-input" value={f.supplier_id} onChange={e => set('supplier_id', e.target.value)}>
+            <option value="">—</option>{suppliers.map(sp => <option key={sp.id} value={sp.id}>{sp.name}</option>)}
+          </select></div>
+        <div className="form-group"><label className="form-label">Garantia (meses)</label><input className="form-input" type="number" min="0" value={f.warranty_months} onChange={e => set('warranty_months', e.target.value)} /></div>
+      </div>
+      <button className="btn btn-primary" disabled={busy} onClick={create}>{busy ? 'Salvando…' : 'Cadastrar produto'}</button>
+    </div>
+    <div className="card">
+      <p style={{ fontSize: '12.5px', fontWeight: 700, marginBottom: '10px' }}>📦 Catálogo ({items.length})</p>
+      {!items.length ? <p style={{ fontSize: '12px', color: 'var(--muted)' }}>Nenhum produto cadastrado. Cadastre acima ou importe via CSV na aba "Importar CSV" — o relatório de recorrência de RMA depende disso.</p> :
+        <table className="table"><thead><tr><th>Nome</th><th>Código</th><th>Categoria</th><th>Fornecedor</th><th>Garantia</th><th></th></tr></thead>
+          <tbody>{items.map(p => <tr key={p.id}>
+            <td>{p.name}</td><td>{p.code || '—'}</td><td>{p.category || '—'}</td><td>{p.supplier_name || '—'}</td><td>{p.warranty_months}m</td>
+            <td><button className="btn btn-sm btn-outline" onClick={() => deactivate(p)}>Desativar</button></td>
+          </tr>)}</tbody></table>}
+    </div>
+  </>;
+}
+
+// ── v2.0: Importação CSV — a "integração de pobre" com o ERP ──
+function ImportTab({ toast }) {
+  const [kind, setKind] = useState('clients');
+  const [preview, setPreview] = useState(null);
+  const [result, setResult] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const expected = kind === 'clients'
+    ? 'name;cnpj;city;state;segment'
+    : 'name;code;model;category;warranty_months';
+  const onFile = async (e) => {
+    const file = e.target.files?.[0]; e.target.value = '';
+    if (!file) return;
+    setResult(null);
+    const text = await file.text();
+    const { headers, rows } = parseCSV(text);
+    if (!rows.length) { toast?.('CSV vazio ou sem linhas de dados.', 'error'); setPreview(null); return; }
+    setPreview({ headers, rows });
+  };
+  const doImport = async () => {
+    if (!preview) return;
+    setBusy(true);
+    try {
+      const r = await api(`/import/${kind}`, 'POST', { rows: preview.rows });
+      setResult(r);
+      toast?.(`Importação concluída: ${r.inserted} inserido(s).`);
+      setPreview(null);
+    } catch(e) { toast?.(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return <div className="card">
+    <p style={{ fontSize: '12.5px', fontWeight: 700, marginBottom: '4px' }}>📥 Importar do ERP via CSV</p>
+    <p style={{ fontSize: '11.5px', color: 'var(--muted)', marginBottom: '12px' }}>Exporte a planilha do ERP e suba aqui. Duplicados são ignorados automaticamente e CNPJs inválidos são rejeitados linha a linha.</p>
+    <div className="form-row" style={{ marginBottom: '10px' }}>
+      <div className="form-group"><label className="form-label">O que importar</label>
+        <select className="form-input" value={kind} onChange={e => { setKind(e.target.value); setPreview(null); setResult(null); }}>
+          <option value="clients">Clientes</option><option value="products">Produtos</option>
+        </select></div>
+      <div className="form-group"><label className="form-label">Arquivo CSV</label>
+        <input className="form-input" type="file" accept=".csv,text/csv" onChange={onFile} /></div>
+    </div>
+    <p style={{ fontSize: '11px', color: 'var(--muted)', marginBottom: '12px' }}>Cabeçalho esperado (separador ; ou ,): <code>{expected}</code></p>
+    {preview && <>
+      <p style={{ fontSize: '12px', fontWeight: 600, marginBottom: '6px' }}>Prévia — {preview.rows.length} linha(s), colunas: {preview.headers.join(', ')}</p>
+      <div style={{ maxHeight: '180px', overflowY: 'auto', marginBottom: '10px', border: '1px solid var(--border)', borderRadius: '8px', padding: '8px', fontSize: '11.5px' }}>
+        {preview.rows.slice(0, 8).map((r, i) => <div key={i} style={{ padding: '3px 0', borderBottom: '1px dashed var(--border)' }}>{Object.values(r).filter(Boolean).join(' · ')}</div>)}
+        {preview.rows.length > 8 && <div style={{ color: 'var(--muted)', paddingTop: '4px' }}>… e mais {preview.rows.length - 8} linha(s)</div>}
+      </div>
+      <button className="btn btn-primary" disabled={busy} onClick={doImport}>{busy ? 'Importando…' : `Importar ${preview.rows.length} linha(s)`}</button>
+    </>}
+    {result && <div style={{ marginTop: '12px', padding: '12px', background: 'var(--bg)', borderRadius: '8px', fontSize: '12.5px' }}>
+      ✅ <b>{result.inserted}</b> inserido(s) · ⏭ <b>{result.skipped_duplicates}</b> duplicado(s) ignorado(s) · ⚠️ <b>{result.invalid}</b> inválido(s)
+      {result.errors?.length > 0 && <ul style={{ marginTop: '6px', paddingLeft: '18px', color: 'var(--red, #dc2626)' }}>{result.errors.map((e, i) => <li key={i}>{e}</li>)}</ul>}
+    </div>}
+  </div>;
+}
+
 function SettingsView({ toast }) {
   const me = getUser();
   const isAdmin = me?.role === 'admin';
@@ -3273,8 +3569,13 @@ function SettingsView({ toast }) {
       <div className={`tabbar-item ${tab==='users'?'active':''}`} onClick={() => setTab('users')}>Usuários</div>
       <div className={`tabbar-item ${tab==='roles'?'active':''}`} onClick={() => setTab('roles')}>Níveis de Acesso</div>
       <div className={`tabbar-item ${tab==='my'?'active':''}`} onClick={() => setTab('my')}>Minha Conta</div>
+      <div className={`tabbar-item ${tab==='products'?'active':''}`} onClick={() => setTab('products')}>Produtos</div>
+      {isAdmin && <div className={`tabbar-item ${tab==='import'?'active':''}`} onClick={() => setTab('import')}>Importar CSV</div>}
       {isAdmin && <div className={`tabbar-item ${tab==='system'?'active':''}`} onClick={() => setTab('system')}>Sistema</div>}
     </div>
+
+    {tab === 'products' && <ProductsTab toast={toast} />}
+    {tab === 'import' && (isAdmin ? <ImportTab toast={toast} /> : <p style={{ fontSize: '12.5px' }}>Apenas administradores.</p>)}
 
     {tab === 'users' && <>
       {!isAdmin ? <div style={{ padding:'20px', background:'var(--pbg)', borderRadius:'12px', fontSize:'13px', color:'var(--pd)' }}>⚠️ Apenas administradores podem gerenciar usuários.</div> : <>
@@ -3520,19 +3821,28 @@ function ResetPasswordModal({ user, onClose, onSaved, toast }) {
 
 function App() {
   const [view, setView] = useState('dashboard');
+  const [menuCounts, setMenuCounts] = useState({});
   const user = getUser();
   const { toasts, push } = useToasts();
+
+  // v2.0: badges reais vindos do banco (adeus números chumbados)
+  useEffect(() => {
+    if (!user) return;
+    let alive = true;
+    api('/menu-counts').then(c => { if (alive) setMenuCounts(c); }).catch(() => {});
+    return () => { alive = false; };
+  }, [view]);
 
   if (!user) return <LoginScreen />;
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard Executivo', icon: '📊', section: 'VISÃO' },
-    { id: 'torre', label: 'Torre de Controle', icon: '🚨', badge: 3 },
-    { id: 'tickets', label: 'Chamados', icon: '📋', badge: 9 },
+    { id: 'torre', label: 'Torre de Controle', icon: '🚨', badge: menuCounts.torre },
+    { id: 'tickets', label: 'Chamados', icon: '📋', badge: menuCounts.tickets },
     { id: 'kanban', label: 'Kanban dos Chamados', icon: '🗂️' },
-    { id: 'complaints', label: 'Reclamações', icon: '⚠️', badge: 5 },
-    { id: 'returns', label: 'Devoluções', icon: '📦', badge: 6 },
-    { id: 'rma', label: 'RMA', icon: '🔧' },
+    { id: 'complaints', label: 'Reclamações', icon: '⚠️', badge: menuCounts.complaints },
+    { id: 'returns', label: 'Devoluções', icon: '📦', badge: menuCounts.returns },
+    { id: 'rma', label: 'RMA', icon: '🔧', badge: menuCounts.rma },
     { id: 'clients360', label: 'Cliente 360', icon: '👁️', section: 'CLIENTES' },
     { id: 'health', label: 'Health Score', icon: '❤️' },
     { id: 'csat', label: 'CSAT / NPS', icon: '⭐' },
@@ -3547,7 +3857,7 @@ function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '0 12px', marginBottom: '16px' }}>
           <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--p)' }}></div>
           <div style={{ fontSize: '13px', fontWeight: '700', color: '#fff' }}>Nextra CSO Hub</div>
-          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,.5)', marginLeft: 'auto' }}>v1.1</div>
+          <div style={{ fontSize: '9px', color: 'rgba(255,255,255,.5)', marginLeft: 'auto' }}>v2.0</div>
         </div>
       </div>
 
@@ -3577,9 +3887,13 @@ function App() {
           <div className="header-title">{navItems.find(i => i.id === view)?.label}</div>
           <div className="header-sub">Últimas ações • {new Date().toLocaleDateString('pt-BR')}</div>
         </div>
-        <div className="user-badge">
-          <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--p)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700' }}>{user.name.charAt(0)}</div>
-          <span>{user.name}</span>
+        <GlobalSearch onNavigate={setView} />
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <NotificationBell onNavigate={setView} />
+          <div className="user-badge">
+            <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'var(--p)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff', fontSize: '14px', fontWeight: '700' }}>{user.name.charAt(0)}</div>
+            <span>{user.name}</span>
+          </div>
         </div>
       </div>
 
