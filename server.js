@@ -135,7 +135,7 @@ async function driveRootFolder() {
     body: JSON.stringify({ name: 'Nextra CSO Hub — Atendimentos', mimeType: 'application/vnd.google-apps.folder' }),
     signal: AbortSignal.timeout(10000),
   })).json();
-  if (!created.id) throw new Error('Drive: falha ao criar pasta-raiz');
+  if (!created.id) throw new Error(`Drive: falha ao criar pasta-raiz (${created.error?.message || JSON.stringify(created).slice(0,120)})`);
   await setSetting('drive_root_folder_id', created.id);
   if (created.webViewLink) await setSetting('drive_root_link', created.webViewLink);
   return created.id;
@@ -156,7 +156,7 @@ async function driveEnsureFolder(name) {
     body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [root] }),
     signal: AbortSignal.timeout(10000),
   })).json();
-  if (!created.id) throw new Error('Drive: falha ao criar pasta');
+  if (!created.id) throw new Error(`Drive: falha ao criar pasta (${created.error?.message || JSON.stringify(created).slice(0,120)})`);
   return created.id;
 }
 
@@ -227,6 +227,65 @@ async function notifyAdmins(type, message, ticketId = null, linkView = null) {
   await notifyUsers(rows.map(r => r.id), type, message, ticketId, linkView);
 }
 
+// ── v3.0: E-mails transacionais ─────────────────────────────────
+const TICKET_STATUS_LABEL_SRV = {
+  new:'Novo', in_triage:'Em triagem', awaiting_info:'Aguardando informações',
+  in_technical_analysis:'Em análise técnica', awaiting_cd_ops:'Aguardando CD/Operações',
+  awaiting_supplier:'Aguardando fornecedor', awaiting_fiscal:'Aguardando fiscal',
+  in_resolution:'Em resolução', awaiting_client_validation:'Aguardando validação do cliente',
+  resolved:'Resolvido', closed:'Encerrado', reopened:'Reaberto',
+};
+const AREA_LABEL_SRV = {
+  support:'Suporte Técnico', operations:'Operações/CD', sales:'Comercial',
+  purchasing:'Compras', warehouse:'CD/Estoque', fiscal:'Fiscal', rma:'RMA',
+  cso:'CSO/Pós-venda', admin:'Administração', board:'Diretoria',
+};
+function emailTemplate(title, rows, ctaUrl) {
+  const linhas = rows.filter(r => r && r[1]).map(([k,v]) =>
+    `<tr><td style="padding:6px 10px;color:#888;font-size:12px;white-space:nowrap">${k}</td><td style="padding:6px 10px;font-size:13px;color:#222">${v}</td></tr>`).join('');
+  return `<div style="font-family:Arial,sans-serif;max-width:560px;margin:auto;padding:20px">
+    <div style="font-weight:bold;color:#1a1a2e;font-size:15px;margin-bottom:4px">Nextra CSO Hub</div>
+    <h2 style="color:#1a1a2e;font-size:18px;margin:6px 0 14px">${title}</h2>
+    <table style="border-collapse:collapse;background:#f7f7fa;border-radius:8px;width:100%">${linhas}</table>
+    ${ctaUrl ? `<p style="text-align:center;margin:22px 0"><a href="${ctaUrl}" style="background:#e94560;color:#fff;padding:11px 26px;border-radius:8px;text-decoration:none;font-weight:bold">Abrir no Hub</a></p>` : ''}
+    <p style="font-size:11px;color:#aaa">Mensagem automática do Nextra CSO Hub — não responda este e-mail.</p></div>`;
+}
+function hubUrl(req) { return (process.env.PUBLIC_BASE_URL || (req ? `${req.protocol}://${req.headers.host}` : '')).replace(/\/$/, ''); }
+// Envia para uma lista de usuários (só quem tem e-mail cadastrado). Best-effort.
+async function emailUsersByIds(ids, subject, html) {
+  const clean = [...new Set((ids||[]).filter(Boolean))];
+  if (!clean.length) return;
+  const { rows } = await db.query(`SELECT email FROM users WHERE id = ANY($1) AND COALESCE(is_active,TRUE) AND email IS NOT NULL AND email <> ''`, [clean]).catch(()=>({rows:[]}));
+  for (const r of rows) sendEmail(r.email, subject, html).catch(()=>{});
+}
+async function emailUsersByRoles(roles, subject, html) {
+  const clean = [...new Set((roles||[]).filter(Boolean))];
+  if (!clean.length) return;
+  const { rows } = await db.query(`SELECT email FROM users WHERE role = ANY($1::user_role[]) AND COALESCE(is_active,TRUE) AND email IS NOT NULL AND email <> ''`, [clean]).catch(()=>({rows:[]}));
+  for (const r of rows) sendEmail(r.email, subject, html).catch(()=>{});
+}
+// E-mail de AÇÃO para as áreas responsáveis/notificadas de um chamado
+function emailAreas(ticket, areas, motivo, req) {
+  const rows = [
+    ['Chamado', ticket.id], ['Cliente', ticket.client_name],
+    ['Criticidade', (ticket.criticality||'').toUpperCase()],
+    ['Prazo SLA', ticket.sla_deadline ? new Date(ticket.sla_deadline).toLocaleString('pt-BR') : null],
+    ['Áreas acionadas', (areas||[]).map(a => AREA_LABEL_SRV[a]||a).join(', ')],
+    ['Descrição', String(ticket.description||'').slice(0,300)],
+    ['O que se espera', String(ticket.expectation||'').slice(0,300)],
+  ];
+  return emailUsersByRoles(areas, `[AÇÃO] ${ticket.id} — ${motivo}`, emailTemplate(`Sua área foi acionada: ${motivo}`, rows, hubUrl(req)));
+}
+// E-mail de ACOMPANHAMENTO para o AM/BDM do chamado (criação, kanban, encerramento)
+function emailAmBdm(ticket, titulo, extraRows, req) {
+  const rows = [
+    ['Chamado', ticket.id], ['Cliente', ticket.client_name],
+    ['Criticidade', (ticket.criticality||'').toUpperCase()],
+    ...(extraRows||[]),
+  ];
+  return emailUsersByIds([ticket.am_user_id, ticket.bdm_user_id], `${ticket.id} — ${titulo}`, emailTemplate(titulo, rows, hubUrl(req)));
+}
+
 // ── v2.0: Validação de CNPJ (servidor) ─────────────────────────
 function isValidCNPJSrv(raw) {
   const c = String(raw || '').replace(/\D/g, '');
@@ -288,8 +347,32 @@ async function slaSweep() {
       const msg = `⏰ SLA ESTOURADO: chamado ${t.id} (${t.client_name || 'cliente não informado'}) ultrapassou o prazo.`;
       await notifyUsers([t.am_user_id, t.created_by_user_id], 'sla_overdue', msg, t.id, 'tickets');
       await notifyAdmins('sla_overdue', msg, t.id, 'tickets');
+      // v3.0: alerta crítico também por e-mail (AM do chamado + admins)
+      const html = emailTemplate('⏰ SLA estourado', [['Chamado', t.id], ['Cliente', t.client_name],
+        ['Prazo', t.sla_deadline ? new Date(t.sla_deadline).toLocaleString('pt-BR') : null],
+        ['Descrição', String(t.description||'').slice(0,200)]], hubUrl(null));
+      emailUsersByIds([t.am_user_id], `[URGENTE] SLA estourado — ${t.id}`, html).catch(()=>{});
+      emailUsersByRoles(['admin'], `[URGENTE] SLA estourado — ${t.id}`, html).catch(()=>{});
     }
   } catch (e) { console.error('slaSweep:', e.message); }
+  // v3.0: RMA parado há mais de 7 dias sem atualização — alerta único por semana
+  try {
+    const { rows: stuck } = await db.query(`
+      SELECT r.id, r.product_name, cl.name AS client_name FROM rma r
+      LEFT JOIN clients cl ON cl.id=r.client_id
+      WHERE r.status NOT IN ('closed','completed','cancelled')
+        AND r.updated_at < NOW() - INTERVAL '7 days'
+        AND NOT EXISTS (SELECT 1 FROM notifications n WHERE n.type='rma_stuck'
+          AND n.message LIKE '%' || r.id || '%' AND n.created_at > NOW() - INTERVAL '7 days')
+      LIMIT 20`);
+    for (const r of stuck) {
+      const msg = `🔧 RMA #${r.id} (${r.client_name || 'sem cliente'} · ${r.product_name || 'produto'}) está sem movimentação há mais de 7 dias.`;
+      await notifyAdmins('rma_stuck', msg, null, 'rma');
+      emailUsersByRoles(['admin','rma'], `[ATENÇÃO] RMA #${r.id} parado há 7+ dias`,
+        emailTemplate('🔧 RMA sem movimentação', [['RMA', '#'+r.id], ['Cliente', r.client_name],
+          ['Produto', r.product_name], ['Situação', 'Mais de 7 dias sem atualização']], hubUrl(null))).catch(()=>{});
+    }
+  } catch (e) { console.error('rmaStuckSweep:', e.message); }
 }
 
 // ── Auth middleware ────────────────────────────────────────────
@@ -512,7 +595,25 @@ load();
       const ok = await bcrypt.compare(String(password), user.password_hash);
       if (!ok) return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: 'Senha incorreta.', status: 401 });
       const token = signToken({ sub: user.id, login: user.login, role: user.role, name: user.name });
-      return { token, user: { id: user.id, login: user.login, name: user.name, role: user.role, title: user.title } };
+      return { token, user: { id: user.id, login: user.login, name: user.name, role: user.role, title: user.title, must_change_password: user.must_change_password === true } };
+    });
+
+    // v3.0: troca de senha pelo próprio usuário (obrigatória no 1º acesso)
+    v1.post('/auth/change-password', { preHandler: [authenticate] }, async (req, reply) => {
+      const { current_password, new_password } = req.body || {};
+      if (!current_password || !new_password)
+        return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Senha atual e nova senha são obrigatórias.', status:400 });
+      if (String(new_password).length < 8)
+        return reply.code(400).send({ error:'VALIDATION_ERROR', message:'A nova senha deve ter pelo menos 8 caracteres.', status:400 });
+      if (String(new_password) === String(current_password))
+        return reply.code(400).send({ error:'VALIDATION_ERROR', message:'A nova senha deve ser diferente da atual.', status:400 });
+      const me = getUser(req);
+      const { rows:[u] } = await db.query('SELECT id,password_hash FROM users WHERE id=$1', [me.sub]);
+      if (!u || !(await bcrypt.compare(String(current_password), u.password_hash)))
+        return reply.code(401).send({ error:'INVALID_CREDENTIALS', message:'Senha atual incorreta.', status:401 });
+      const hash = await bcrypt.hash(String(new_password), 12);
+      await db.query('UPDATE users SET password_hash=$2, must_change_password=FALSE, updated_at=NOW() WHERE id=$1', [me.sub, hash]);
+      return { changed: true };
     });
 
     v1.post('/auth/logout', { preHandler: [authenticate] }, async (req, reply) => {
@@ -580,8 +681,8 @@ load();
       if (dup.length) return reply.code(409).send({ error:'LOGIN_TAKEN', message:'Login já em uso.', status:409 });
       const hash = await bcrypt.hash(String(d.password), 10);
       const { rows:[u] } = await db.query(`
-        INSERT INTO users (name,email,login,password_hash,role,title,access_level,department,phone,is_active)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE)
+        INSERT INTO users (name,email,login,password_hash,role,title,access_level,department,phone,is_active,must_change_password)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,TRUE)
         RETURNING id,name,email,login,role,title,access_level,department,phone,is_active,created_at`,
         [d.name, d.email||null, d.login, hash, d.role, d.title||null, d.access_level||'standard', d.department||null, d.phone||null]);
       return reply.code(201).send(u);
@@ -831,6 +932,41 @@ load();
 
     // ═══════════════════════════════════════════════════════════
     // ═══════════════════════════════════════════════════════════
+    // v2.3 — EXCLUSÃO DE REGISTROS (somente admin, com auditoria)
+    // ═══════════════════════════════════════════════════════════
+    const ENTITY_TABLE = { ticket: 'tickets', complaint: 'complaints', return: 'returns', rma: 'rma' };
+    const makeDeleteRoute = (etype, path) => {
+      v1.delete(`/${path}/:id`, { preHandler: [authorize('admin')] }, async (req, reply) => {
+        const table = ENTITY_TABLE[etype];
+        const id = etype === 'ticket' ? String(req.params.id) : parseInt(req.params.id);
+        if (etype !== 'ticket' && !Number.isInteger(id)) return send404(reply);
+        const { rows:[row] } = await db.query(`SELECT * FROM ${table} WHERE id=$1`, [id]);
+        if (!row) return send404(reply);
+        // Conexão dedicada: SET LOCAL autoriza o cascade nas tabelas de
+        // histórico append-only APENAS dentro desta transação (migration 014).
+        const client = await pool.connect();
+        try {
+          await client.query('BEGIN');
+          await client.query(`SET LOCAL app.admin_delete = 'on'`);
+          await client.query(`DELETE FROM attachments WHERE entity_type=$1 AND entity_id=$2`, [etype, String(id)]);
+          await client.query(`DELETE FROM ${table} WHERE id=$1`, [id]);
+          await client.query('COMMIT');
+        } catch (e) {
+          await client.query('ROLLBACK').catch(() => {});
+          if (e.code === '23503')
+            return reply.code(409).send({ error:'HAS_LINKS', message:'Este registro tem vínculos ativos (ex.: RMA gerado a partir dele). Exclua primeiro o registro vinculado.', status:409 });
+          throw e;
+        } finally { client.release(); }
+        await auditLog(req, 'delete', table, String(id), row, null);
+        return { deleted: true, id };
+      });
+    };
+    makeDeleteRoute('ticket', 'tickets');
+    makeDeleteRoute('complaint', 'complaints');
+    makeDeleteRoute('return', 'returns');
+    makeDeleteRoute('rma', 'rma');
+
+    // ═══════════════════════════════════════════════════════════
     // v2.2 — GOOGLE DRIVE: conexão OAuth e status
     // ═══════════════════════════════════════════════════════════
     const driveRedirectUri = (req) => {
@@ -902,6 +1038,21 @@ load();
         console.error('drive oauth callback:', e.message);
         return page('Falha na conexão', `Erro: ${e.message}. Verifique o Client ID/Secret e tente novamente.`, false);
       }
+    });
+
+    // v3.0: reespelha no Drive anexos enviados antes da conexão (lotes de 15)
+    v1.post('/drive/remirror', { preHandler: [authorize('admin')] }, async (req, reply) => {
+      if (!(await driveConfigured()))
+        return reply.code(400).send({ error:'NOT_CONNECTED', message:'Conecte o Google Drive primeiro.', status:400 });
+      const { rows } = await db.query(`SELECT id,entity_type,entity_id,filename,mime,data FROM attachments WHERE drive_url IS NULL ORDER BY id LIMIT 15`);
+      let ok = 0, fail = 0;
+      for (const a of rows) {
+        const url = await driveMirror(a.entity_type, a.entity_id, a.filename, a.mime, a.data);
+        if (url) { await db.query('UPDATE attachments SET drive_url=$1 WHERE id=$2', [url, a.id]).catch(()=>{}); ok++; }
+        else fail++;
+      }
+      const { rows:[c] } = await db.query('SELECT COUNT(*)::int AS n FROM attachments WHERE drive_url IS NULL');
+      return { mirrored: ok, failed: fail, remaining: c.n };
     });
 
     v1.post('/drive/disconnect', { preHandler: [authorize('admin')] }, async () => {
@@ -1081,6 +1232,10 @@ load();
            d.is_vip||false, d.is_recurrence||false, slaDeadline.toISOString()]
         );
         await db.query(`INSERT INTO ticket_history (ticket_id,user_id,action) VALUES ($1,$2,'ticket_aberto')`, [ticketId, user.sub]);
+        // v3.0: e-mail de ação para as áreas acionadas + acompanhamento ao AM/BDM
+        const areasAcionadas = [...new Set([ticket.area_responsible, ...(notifyAreas||[])])].filter(Boolean);
+        emailAreas(ticket, areasAcionadas, 'Novo chamado aberto', req).catch(()=>{});
+        emailAmBdm(ticket, 'Novo chamado criado para seu cliente', [['Status','Novo'],['Aberto por', user.name]], req).catch(()=>{});
         await auditLog(req, 'create', 'tickets', ticketId, null, ticket);
         return reply.code(201).send(ticket);
       } catch(e) {
@@ -1157,8 +1312,12 @@ load();
 
     v1.patch('/tickets/:id/notify-areas', { preHandler: [authenticate] }, async (req, reply) => {
       const areas = Array.isArray(req.body?.notify_areas) ? req.body.notify_areas : [];
+      const { rows:[antes] } = await db.query('SELECT notify_areas FROM tickets WHERE id=$1', [req.params.id]);
       const { rows:[u] } = await db.query(`UPDATE tickets SET notify_areas=$2::user_role[], updated_at=NOW() WHERE id=$1 RETURNING *`, [req.params.id, areas]);
       if (!u) return send404(reply);
+      // v3.0: e-mail de ação apenas para áreas que ENTRARAM agora (quem já sabia não recebe de novo)
+      const novas = areas.filter(a => !(antes?.notify_areas||[]).includes(a));
+      if (novas.length) emailAreas(u, novas, 'Área acionada em chamado existente', req).catch(()=>{});
       return u;
     });
 
@@ -1203,6 +1362,31 @@ load();
       );
       await db.query(`INSERT INTO ticket_history (ticket_id,user_id,action,note) VALUES ($1,$2,$3,$4)`,
         [id, user.sub, `status: ${t.status} → ${newStatus}`, note||null]);
+      // v3.0: acompanhamento ao AM/BDM a cada movimento no kanban
+      if (newStatus && newStatus !== t.status) {
+        const titulo = newStatus === 'closed' ? 'Chamado encerrado' : `Chamado avançou: ${TICKET_STATUS_LABEL_SRV[newStatus]||newStatus}`;
+        emailAmBdm(u, titulo, [
+          ['Movimento', `${TICKET_STATUS_LABEL_SRV[t.status]||t.status} → ${TICKET_STATUS_LABEL_SRV[newStatus]||newStatus}`],
+          ['Por', user.name], note ? ['Observação', String(note).slice(0,200)] : null,
+          newStatus === 'closed' ? ['Resolução', String(u.resolution||'').slice(0,250)] : null,
+        ].filter(Boolean), req).catch(()=>{});
+      }
+      // v3.0: CSAT automático no encerramento — cria o link e envia ao cliente (se tiver e-mail)
+      if (newStatus === 'closed' && u.client_id) {
+        (async () => {
+          try {
+            const { rows:[cli] } = await db.query('SELECT id,name,email FROM clients WHERE id=$1', [u.client_id]);
+            if (!cli?.email) return;
+            const stoken = crypto.randomBytes(20).toString('hex');
+            await db.query(`INSERT INTO survey_links (token,survey_type,client_id,business_unit_id,ticket_id,created_by)
+              VALUES ($1,'csat',$2,$3,$4,$5)`, [stoken, cli.id, u.business_unit_id||'led', u.id, user.sub]);
+            const surl = `${hubUrl(req)}/survey/${stoken}`;
+            await sendEmail(cli.email, `Nextra — Como foi o atendimento do chamado ${u.id}?`,
+              emailTemplate('Seu atendimento foi encerrado. Como foi a experiência?',
+                [['Chamado', u.id], ['Cliente', cli.name]], surl).replace('Abrir no Hub','Responder pesquisa (1 min)'));
+          } catch (e) { console.error('autoCsat:', e.message); }
+        })();
+      }
       return u;
     });
 

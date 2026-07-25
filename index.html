@@ -135,8 +135,9 @@ const API_BASE = '/api/v1';
 const TOKEN = localStorage.getItem('token');
 
 const api = async (path, method='GET', body=null) => {
-  const opts = { method, headers: { 'Authorization': `Bearer ${TOKEN}`, 'Content-Type': 'application/json' } };
-  if (body) opts.body = JSON.stringify(body);
+  const opts = { method, headers: { 'Authorization': `Bearer ${TOKEN}` } };
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  else if (method === 'POST' || method === 'PATCH' || method === 'PUT') { opts.headers['Content-Type'] = 'application/json'; opts.body = '{}'; }
   const r = await fetch(API_BASE + path, opts);
   if (r.status === 401) { localStorage.clear(); window.location.href = '/'; }
   if (!r.ok) {
@@ -178,6 +179,91 @@ function parseCSV(text) {
 }
 
 // ── v2.0: Painel de Anexos (fotos de defeito, NF em PDF, vídeos…) ──
+// v3.0: anexos selecionados ANTES de salvar (sobem logo após a criação)
+function StagedAttachments({ files, setFiles }) {
+  const pick = (e) => {
+    const novos = [...(e.target.files || [])].filter(f => f.size <= 10 * 1048576);
+    if (novos.length < (e.target.files||[]).length) alert('Arquivos acima de 10MB foram ignorados.');
+    setFiles(prev => [...prev, ...novos]); e.target.value = '';
+  };
+  return <div style={{ marginTop: '10px', paddingTop: '10px', borderTop: '1px dashed var(--border)' }}>
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+      <span style={{ fontSize: '12px', fontWeight: 700 }}>📎 Anexos ({files.length})</span>
+      <label className="btn btn-secondary" style={{ fontSize: '11px', padding: '4px 10px', cursor: 'pointer' }}>
+        + Anexar arquivo<input type="file" multiple style={{ display: 'none' }} onChange={pick} />
+      </label>
+    </div>
+    {files.map((f, i) => <div key={i} style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '11.5px', padding: '4px 8px', background: 'var(--bg)', borderRadius: '6px', marginBottom: '3px' }}>
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.name}</span>
+      <span style={{ color: 'var(--muted)' }}>{fmtBytes(f.size)}</span>
+      <span style={{ cursor: 'pointer', color: 'var(--danger, #c0392b)' }} onClick={() => setFiles(prev => prev.filter((_, x) => x !== i))}>✕</span>
+    </div>)}
+  </div>;
+}
+async function uploadStaged(entityType, entityId, files, toast) {
+  for (const f of (files || [])) {
+    try {
+      const data_base64 = await fileToBase64(f);
+      await api(`/attachments/${entityType}/${entityId}`, 'POST', { filename: f.name, mime: f.type, data_base64 });
+    } catch (e) { toast?.(`Anexo ${f.name}: ${e.message}`, 'error'); }
+  }
+}
+
+// v3.0: troca de senha obrigatória no primeiro acesso
+function ForcePasswordScreen({ onDone }) {
+  const [f, setF] = useState({ atual: '', nova: '', confirma: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const submit = async () => {
+    setErr('');
+    if (f.nova !== f.confirma) { setErr('A confirmação não confere com a nova senha.'); return; }
+    setBusy(true);
+    try {
+      await api('/auth/change-password', 'POST', { current_password: f.atual, new_password: f.nova });
+      const u = getUser(); u.must_change_password = false;
+      localStorage.setItem('user', JSON.stringify(u));
+      onDone();
+    } catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
+  };
+  return <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--dark, #1a1a2e)' }}>
+    <div className="card" style={{ maxWidth: '400px', width: '92%', padding: '28px' }}>
+      <div style={{ fontSize: '30px', textAlign: 'center' }}>🔐</div>
+      <h2 style={{ textAlign: 'center', fontSize: '17px', margin: '8px 0 4px' }}>Defina sua nova senha</h2>
+      <p style={{ fontSize: '12px', color: 'var(--muted)', textAlign: 'center', marginBottom: '16px' }}>
+        Por segurança, a senha padrão precisa ser trocada antes do primeiro uso. Mínimo de 8 caracteres.</p>
+      <div className="form-group"><label className="form-label">Senha atual</label>
+        <input className="form-input" type="password" value={f.atual} onChange={e => setF(p => ({ ...p, atual: e.target.value }))} /></div>
+      <div className="form-group"><label className="form-label">Nova senha</label>
+        <input className="form-input" type="password" value={f.nova} onChange={e => setF(p => ({ ...p, nova: e.target.value }))} /></div>
+      <div className="form-group"><label className="form-label">Confirmar nova senha</label>
+        <input className="form-input" type="password" value={f.confirma} onChange={e => setF(p => ({ ...p, confirma: e.target.value }))}
+          onKeyDown={e => e.key === 'Enter' && submit()} /></div>
+      {err && <p style={{ color: 'var(--danger, #c0392b)', fontSize: '12px' }}>{err}</p>}
+      <button className="btn btn-primary" style={{ width: '100%', marginTop: '8px' }} disabled={busy} onClick={submit}>
+        {busy ? 'Salvando…' : 'Salvar e entrar'}</button>
+    </div>
+  </div>;
+}
+
+// v2.3: exclusão de registro (somente admin, com confirmação dupla)
+function DeleteButton({ path, id, label, onDeleted, toast }) {
+  const me = getUser();
+  const [busy, setBusy] = useState(false);
+  if (me?.role !== 'admin') return null;
+  const del = async () => {
+    if (!window.confirm(`Excluir ${label} ${id}?\n\nAnexos e histórico serão removidos junto. Esta ação fica registrada na auditoria e NÃO pode ser desfeita.`)) return;
+    setBusy(true);
+    try { await api(`/${path}/${id}`, 'DELETE'); toast?.(`${label} ${id} excluído.`); onDeleted?.(); }
+    catch(e) { toast?.(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return <button className="btn btn-secondary" disabled={busy} onClick={del}
+    style={{ color: 'var(--danger, #c0392b)', fontSize: '11.5px', padding: '5px 12px' }}>
+    {busy ? 'Excluindo…' : '🗑 Excluir'}
+  </button>;
+}
+
 // v2.1: separa listas de AM e BDM pelo campo title do usuário; se ninguém
 // tiver o título (base antiga), cai de volta para a lista completa.
 const byTitle = (list, t) => {
@@ -711,6 +797,7 @@ function KanbanView({ toast }) {
 }
 
 function CreateTicketModal({ onClose, onCreated, toast }) {
+  const [staged, setStaged] = useState([]);
   const [f, setF] = useState({
     business_unit_id: 'led', client_id: '', client_name: '', cnpj: '', channel: 'whatsapp',
     occurrence_type: 'technical_support', criticality: 'medium',
@@ -793,7 +880,8 @@ function CreateTicketModal({ onClose, onCreated, toast }) {
     try {
       const p = { ...f, client_id: f.client_id ? parseInt(f.client_id) : null, quantity: qty,
         order_value: f.order_value ? parseFloat(f.order_value) : null, revenue_at_risk: f.revenue_at_risk ? parseFloat(f.revenue_at_risk) : 0 };
-      await api('/tickets', 'POST', p);
+      const criado = await api('/tickets', 'POST', p);
+      await uploadStaged('ticket', criado.id, staged, toast);
       onCreated();
     } catch(e) { toast?.(e.message, 'error'); }
     finally { setBusy(false); }
@@ -938,6 +1026,8 @@ function CreateTicketModal({ onClose, onCreated, toast }) {
           </div>
           <p style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '8px' }}>As equipes selecionadas serão notificadas sobre este chamado.</p>
         </div>
+
+        <StagedAttachments files={staged} setFiles={setStaged} />
 
         <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end', marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--line)' }}>
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
@@ -1241,6 +1331,10 @@ function TicketDetailModal({ id, onClose, onChanged, toast }) {
 
         {tab === 'history' && <>
           <AttachmentsPanel entityType="ticket" entityId={t.id} toast={toast} />
+
+        <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+          <DeleteButton path="tickets" id={t.id} label="Chamado" toast={toast} onDeleted={() => { onChanged?.(); onClose(); }} />
+        </div>
           <Timeline items={history} />
           <div className="form-group" style={{ marginTop: '14px' }}>
             <label className="form-label">Adicionar nota interna</label>
@@ -1342,6 +1436,7 @@ function ComplaintsView({ toast }) {
 }
 
 function CreateComplaintModal({ onClose, onCreated, toast }) {
+  const [staged, setStaged] = useState([]);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -1362,12 +1457,13 @@ function CreateComplaintModal({ onClose, onCreated, toast }) {
     if (!f.client_id || !f.reason.trim()) { toast?.('Cliente e motivo são obrigatórios.', 'error'); return; }
     setBusy(true);
     try {
-      await api('/complaints', 'POST', {
+      const criado = await api('/complaints', 'POST', {
         ...f, client_id: parseInt(f.client_id),
         causing_area: f.causing_area || null,
         responsible_user_id: f.responsible_user_id ? parseInt(f.responsible_user_id) : null,
         loss_risk: f.loss_risk ? parseFloat(f.loss_risk) : 0,
       });
+      await uploadStaged('complaint', criado.id || criado.data?.id, staged, toast);
       onCreated();
     } catch(e) { toast?.(e.message, 'error'); }
     finally { setBusy(false); }
@@ -1464,6 +1560,7 @@ function CreateComplaintModal({ onClose, onCreated, toast }) {
             <textarea className="form-input" value={f.commercial_impact} onChange={e => set('commercial_impact', e.target.value)} placeholder="Risco de churn, redução de carteira, impacto em renovação..." />
           </div>
         </div>
+          <div style={{ padding: "0 24px 4px" }}><StagedAttachments files={staged} setFiles={setStaged} /></div>
         <div className="modal-footer">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn btn-purple" disabled={busy}>{busy && <span className="spinner" style={{ marginRight: '6px' }} />}✓ Registrar Reclamação</button>
@@ -1560,6 +1657,10 @@ function ComplaintDetailModal({ id, onClose, onChanged, toast }) {
         </div>
 
         <AttachmentsPanel entityType="complaint" entityId={c.id} toast={toast} />
+
+        <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+          <DeleteButton path="complaints" id={c.id} label="Reclamação" toast={toast} onDeleted={() => { onChanged?.(); onClose(); }} />
+        </div>
       </div>
     </div>
   </div>;
@@ -1640,6 +1741,7 @@ function ReturnsView({ toast }) {
 }
 
 function CreateReturnModal({ onClose, onCreated, toast }) {
+  const [staged, setStaged] = useState([]);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -1660,13 +1762,14 @@ function CreateReturnModal({ onClose, onCreated, toast }) {
     if (!f.client_id || !f.reason.trim()) { toast?.('Cliente e motivo são obrigatórios.', 'error'); return; }
     setBusy(true);
     try {
-      await api('/returns', 'POST', {
+      const criado = await api('/returns', 'POST', {
         ...f, client_id: parseInt(f.client_id), quantity: parseInt(f.quantity) || 1,
         unit_value: f.unit_value ? parseFloat(f.unit_value) : null,
         nf_value: f.nf_value ? parseFloat(f.nf_value) : null,
         ticket_id: f.ticket_id || null,
         responsible_user_id: f.responsible_user_id ? parseInt(f.responsible_user_id) : null,
       });
+      await uploadStaged('return', criado.id || criado.data?.id, staged, toast);
       onCreated();
     } catch(e) { toast?.(e.message, 'error'); }
     finally { setBusy(false); }
@@ -1717,6 +1820,7 @@ function CreateReturnModal({ onClose, onCreated, toast }) {
               <option value="">Eu mesmo</option>{users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select></div>
         </div>
+          <div style={{ padding: "0 24px 4px" }}><StagedAttachments files={staged} setFiles={setStaged} /></div>
         <div className="modal-footer">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn btn-purple" disabled={busy}>{busy && <span className="spinner" style={{ marginRight: '6px' }} />}✓ Registrar Devolução</button>
@@ -1956,6 +2060,10 @@ function ReturnDetailModal({ id, onClose, onChanged, toast }) {
 
         {tab === 'history' && <>
           <AttachmentsPanel entityType="return" entityId={r.id} toast={toast} />
+
+        <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+          <DeleteButton path="returns" id={r.id} label="Devolução" toast={toast} onDeleted={() => { onChanged?.(); onClose(); }} />
+        </div>
           <Timeline items={r.history} />
           <div className="form-group" style={{ marginTop: '14px' }}>
             <label className="form-label">Adicionar nota interna</label>
@@ -2085,6 +2193,7 @@ function RMAView({ toast }) {
 }
 
 function CreateRMAModal({ onClose, onCreated, toast }) {
+  const [staged, setStaged] = useState([]);
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [suppliers, setSuppliers] = useState([]);
@@ -2137,6 +2246,7 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
         product_id: f.product_id ? parseInt(f.product_id) : null,
         purchase_date: f.purchase_date || null,
       });
+      await uploadStaged('rma', res.id || res.data?.id, staged, toast);
       onCreated(res);
     } catch(e) { toast?.(e.message, 'error'); }
     finally { setBusy(false); }
@@ -2205,6 +2315,7 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
               <option value="">Eu mesmo</option>{users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select></div>
         </div>
+          <div style={{ padding: "0 24px 4px" }}><StagedAttachments files={staged} setFiles={setStaged} /></div>
         <div className="modal-footer">
           <button type="button" className="btn btn-outline" onClick={onClose}>Cancelar</button>
           <button type="submit" className="btn btn-purple" disabled={busy}>{busy && <span className="spinner" style={{ marginRight: '6px' }} />}✓ Registrar RMA</button>
@@ -2289,6 +2400,10 @@ function RMADetailModal({ id, onClose, onChanged, toast }) {
         </div>
 
         <AttachmentsPanel entityType="rma" entityId={r.id} toast={toast} />
+
+        <div style={{ marginTop: '14px', paddingTop: '10px', borderTop: '1px dashed var(--border)', display: 'flex', justifyContent: 'flex-end' }}>
+          <DeleteButton path="rma" id={r.id} label="RMA" toast={toast} onDeleted={() => { onChanged?.(); onClose(); }} />
+        </div>
 
 
         {(() => { const sug = suggestRmaAction(r); return sug ? (
@@ -3607,7 +3722,22 @@ function IntegrationsTab({ toast }) {
     {st.mode === 'oauth' && st.connected && <div>
       <p style={{ fontSize: '12.5px', marginBottom: '6px' }}>Status: <span style={{ color: 'var(--ok)', fontWeight: 700 }}>● Conectado</span>{st.account ? <span style={{ color: 'var(--muted)' }}> — {st.account}</span> : null}</p>
       {st.root_link && <p style={{ fontSize: '12.5px', marginBottom: '12px' }}><a href={st.root_link} target="_blank" rel="noreferrer" style={{ color: 'var(--pd)', fontWeight: 600 }}>Abrir pasta "Nextra CSO Hub — Atendimentos" no Drive ↗</a></p>}
-      <button className="btn btn-secondary" onClick={disconnect}>Desconectar</button>
+      <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+        <button className="btn btn-primary" disabled={busy} onClick={async () => {
+          setBusy(true);
+          try {
+            let total = 0, falhas = 0, resto = 1, rodadas = 0;
+            while (resto > 0 && rodadas < 40) {
+              const r = await api('/drive/remirror', 'POST');
+              total += r.mirrored; falhas += r.failed; resto = r.remaining; rodadas++;
+              if (r.mirrored === 0 && r.failed > 0) break;
+            }
+            toast?.(`Reespelhamento: ${total} enviados ao Drive${falhas ? `, ${falhas} falharam (ver logs)` : ''}${resto ? `, ${resto} pendentes` : ''}.`);
+          } catch(e) { toast?.(e.message, 'error'); }
+          finally { setBusy(false); }
+        }}>{busy ? 'Enviando…' : '🔁 Reespelhar anexos antigos'}</button>
+        <button className="btn btn-secondary" onClick={disconnect}>Desconectar</button>
+      </div>
     </div>}
   </div>;
 }
@@ -3905,6 +4035,7 @@ function App() {
   }, [view]);
 
   if (!user) return <LoginScreen />;
+  if (user.must_change_password) return <ForcePasswordScreen onDone={() => window.location.reload()} />;
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard Executivo', icon: '📊', section: 'VISÃO' },
