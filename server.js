@@ -33,6 +33,96 @@ const JWT_EXPIRES = process.env.JWT_EXPIRES_IN || '8h';
 const signToken   = (payload) => jwt.sign({ ...payload, jti: crypto.randomUUID() }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 const verifyToken = (token)   => jwt.verify(token, JWT_SECRET);
 
+// ── v2.1: Google Drive (opcional) ──────────────────────────────
+// Espelha cada anexo numa pasta por atendimento dentro do Drive.
+// Ativa quando GOOGLE_SA_EMAIL, GOOGLE_SA_PRIVATE_KEY e DRIVE_ROOT_FOLDER_ID
+// estiverem configuradas no Railway. Sem elas, os anexos continuam
+// funcionando normalmente no Postgres — o Drive é só um espelho.
+let _driveToken = null, _driveTokenExp = 0;
+
+function driveConfigured() {
+  return !!(process.env.GOOGLE_SA_EMAIL && process.env.GOOGLE_SA_PRIVATE_KEY && process.env.DRIVE_ROOT_FOLDER_ID);
+}
+
+async function getDriveToken() {
+  if (_driveToken && Date.now() < _driveTokenExp - 60000) return _driveToken;
+  const now = Math.floor(Date.now() / 1000);
+  const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+  const unsigned = b64u({ alg: 'RS256', typ: 'JWT' }) + '.' + b64u({
+    iss: process.env.GOOGLE_SA_EMAIL,
+    scope: 'https://www.googleapis.com/auth/drive',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat: now, exp: now + 3600,
+  });
+  // No Railway a chave é colada com \n literais — normaliza para quebras reais.
+  const pem = process.env.GOOGLE_SA_PRIVATE_KEY.replace(/\\n/g, '\n');
+  const signature = crypto.sign('RSA-SHA256', Buffer.from(unsigned), pem).toString('base64url');
+  const r = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + signature }),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!r.ok) throw new Error(`Drive auth: HTTP ${r.status}`);
+  const d = await r.json();
+  _driveToken = d.access_token;
+  _driveTokenExp = Date.now() + (d.expires_in || 3600) * 1000;
+  return _driveToken;
+}
+
+// Encontra (ou cria) a pasta do atendimento dentro da pasta-raiz do Hub.
+async function driveEnsureFolder(name) {
+  const token = await getDriveToken();
+  const root = process.env.DRIVE_ROOT_FOLDER_ID;
+  const q = encodeURIComponent(`name='${name.replace(/'/g, "\\'")}' and '${root}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
+  const found = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000),
+  })).json();
+  if (found.files && found.files.length) return found.files[0].id;
+  const created = await (await fetch('https://www.googleapis.com/drive/v3/files?supportsAllDrives=true', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder', parents: [root] }),
+    signal: AbortSignal.timeout(10000),
+  })).json();
+  if (!created.id) throw new Error('Drive: falha ao criar pasta');
+  return created.id;
+}
+
+// Sobe o arquivo (multipart) para a pasta e devolve o link de visualização.
+async function driveUploadFile(folderId, filename, mime, buffer) {
+  const token = await getDriveToken();
+  const boundary = 'nxt' + crypto.randomBytes(12).toString('hex');
+  const meta = JSON.stringify({ name: filename, parents: [folderId] });
+  const body = Buffer.concat([
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: ${mime || 'application/octet-stream'}\r\n\r\n`),
+    buffer,
+    Buffer.from(`\r\n--${boundary}--`),
+  ]);
+  const r = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,webViewLink&supportsAllDrives=true', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body, signal: AbortSignal.timeout(30000),
+  });
+  if (!r.ok) throw new Error(`Drive upload: HTTP ${r.status}`);
+  const d = await r.json();
+  return d.webViewLink || (d.id ? `https://drive.google.com/file/d/${d.id}/view` : null);
+}
+
+const DRIVE_FOLDER_PREFIX = { ticket: 'CHAMADO', return: 'DEVOLUCAO', rma: 'RMA', complaint: 'RECLAMACAO', survey: 'PESQUISA' };
+
+// Best-effort: falha do Drive nunca derruba o upload principal (Postgres).
+async function driveMirror(etype, eid, filename, mime, buffer) {
+  if (!driveConfigured()) return null;
+  try {
+    const folderId = await driveEnsureFolder(`${DRIVE_FOLDER_PREFIX[etype] || etype.toUpperCase()}-${eid}`);
+    return await driveUploadFile(folderId, filename, mime, buffer);
+  } catch (e) {
+    console.error('driveMirror:', e.message);
+    return null;
+  }
+}
+
 // ── v2.0: E-mail via Resend API (fetch nativo — zero dependência) ──
 // Configure RESEND_API_KEY (e opcionalmente EMAIL_FROM) no Railway para ativar.
 async function sendEmail(to, subject, html) {
@@ -120,7 +210,7 @@ async function slaSweep() {
   try {
     const { rows } = await db.query(`
       UPDATE tickets SET sla_state='overdue', updated_at=NOW()
-      WHERE sla_deadline < NOW() AND sla_state='ok' AND status NOT IN ('closed','resolved')
+      WHERE sla_deadline < NOW() AND sla_state IN ('ok','warn') AND status NOT IN ('closed','resolved')
       RETURNING id, client_name, am_user_id, created_by_user_id`);
     for (const t of rows) {
       const msg = `⏰ SLA ESTOURADO: chamado ${t.id} (${t.client_name || 'cliente não informado'}) ultrapassou o prazo.`;
@@ -397,9 +487,10 @@ load();
 
     // Lightweight lookup for dropdowns (AM, BDM, responsável) — any authenticated user
     v1.get('/users/lookup', { preHandler: [authenticate] }, async (req) => {
-      const { role } = req.query || {};
+      const { role, title } = req.query || {};
       const where = ['is_active=TRUE']; const params = [];
-      if (role) { params.push(role); where.push(`role=$${params.length}`); }
+      if (role)  { params.push(role);  where.push(`role=$${params.length}`); }
+      if (title) { params.push(title); where.push(`UPPER(COALESCE(title,''))=UPPER($${params.length})`); }
       const { rows } = await db.query(`SELECT id,name,role,title FROM users WHERE ${where.join(' AND ')} ORDER BY name`, params);
       return rows;
     });
@@ -462,7 +553,7 @@ load();
     // ═══════════════════════════════════════════════════════════
     // v2.0 — ANEXOS (armazenados no Postgres; sobrevivem a redeploy)
     // ═══════════════════════════════════════════════════════════
-    const ATTACH_TYPES = ['ticket','return','rma','complaint'];
+    const ATTACH_TYPES = ['ticket','return','rma','complaint','survey'];
     const MAX_ATTACH = 10 * 1024 * 1024; // 10MB por arquivo
 
     v1.post('/attachments/:etype/:eid', { preHandler: [authenticate] }, async (req, reply) => {
@@ -479,14 +570,17 @@ load();
         `INSERT INTO attachments (entity_type,entity_id,filename,mime,size_bytes,data,uploaded_by)
          VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id,entity_type,entity_id,filename,mime,size_bytes,created_at`,
         [etype, String(eid), String(d.filename).slice(0,255), d.mime||'application/octet-stream', buf.length, buf, user.sub]);
-      return reply.code(201).send(a);
+      // v2.1: espelha no Google Drive (se configurado) — nunca bloqueia o upload principal.
+      const driveUrl = await driveMirror(etype, String(eid), a.filename, a.mime, buf);
+      if (driveUrl) await db.query(`UPDATE attachments SET drive_url=$1 WHERE id=$2`, [driveUrl, a.id]).catch(() => {});
+      return reply.code(201).send({ ...a, drive_url: driveUrl });
     });
 
     v1.get('/attachments/:etype/:eid', { preHandler: [authenticate] }, async (req, reply) => {
       const { etype, eid } = req.params;
       if (!ATTACH_TYPES.includes(etype)) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Tipo de entidade inválido.', status:400 });
       const { rows } = await db.query(
-        `SELECT a.id,a.filename,a.mime,a.size_bytes,a.created_at,u.name AS uploaded_by_name
+        `SELECT a.id,a.filename,a.mime,a.size_bytes,a.created_at,a.drive_url,u.name AS uploaded_by_name
          FROM attachments a LEFT JOIN users u ON u.id=a.uploaded_by
          WHERE a.entity_type=$1 AND a.entity_id=$2 ORDER BY a.created_at DESC`, [etype, String(eid)]);
       return rows;
@@ -1336,7 +1430,10 @@ load();
       if (client_id) { params.push(parseInt(client_id)); where.push(`r.client_id=$${params.length}`); }
       const { rows } = await db.query(
         `SELECT r.*,cl.name AS client_name,sp.name AS supplier_name,
-           (SELECT COUNT(*)::int FROM rma r2 WHERE COALESCE(r2.product_code,r2.product_name)=COALESCE(r.product_code,r.product_name) AND r2.id!=r.id) AS recurrence_count
+           (SELECT COUNT(*)::int FROM rma r2 WHERE r2.id!=r.id AND (
+              (r.product_id IS NOT NULL AND r2.product_id=r.product_id)
+              OR (r.product_id IS NULL AND COALESCE(r2.product_code,r2.product_name)=COALESCE(r.product_code,r.product_name))
+            )) AS recurrence_count
          FROM rma r
          LEFT JOIN clients cl ON cl.id=r.client_id
          LEFT JOIN suppliers sp ON sp.id=r.supplier_id
@@ -1493,6 +1590,8 @@ load();
         const digits = String(d.cnpj).replace(/\D/g,'');
         if (digits.length !== 14)
           return reply.code(400).send({ error:'VALIDATION_ERROR', message:'CNPJ deve ter 14 dígitos.', status:400 });
+        if (!isValidCNPJSrv(digits))
+          return reply.code(400).send({ error:'VALIDATION_ERROR', message:'CNPJ inválido (dígito verificador não confere).', status:400 });
         const { rows: dup } = await db.query('SELECT id,name FROM clients WHERE cnpj=$1', [d.cnpj]);
         if (dup.length) return reply.code(409).send({ error:'CNPJ_TAKEN', message:`CNPJ já cadastrado para o cliente "${dup[0].name}".`, status:409 });
       }
@@ -1514,6 +1613,8 @@ load();
         const digits = String(d.cnpj).replace(/\D/g,'');
         if (digits.length !== 14)
           return reply.code(400).send({ error:'VALIDATION_ERROR', message:'CNPJ deve ter 14 dígitos.', status:400 });
+        if (!isValidCNPJSrv(digits))
+          return reply.code(400).send({ error:'VALIDATION_ERROR', message:'CNPJ inválido (dígito verificador não confere).', status:400 });
         const { rows: dup } = await db.query('SELECT id,name FROM clients WHERE cnpj=$1 AND id!=$2', [d.cnpj, req.params.id]);
         if (dup.length) return reply.code(409).send({ error:'CNPJ_TAKEN', message:`CNPJ já cadastrado para o cliente "${dup[0].name}".`, status:409 });
       }

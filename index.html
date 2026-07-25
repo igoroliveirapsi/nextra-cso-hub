@@ -178,6 +178,13 @@ function parseCSV(text) {
 }
 
 // ── v2.0: Painel de Anexos (fotos de defeito, NF em PDF, vídeos…) ──
+// v2.1: separa listas de AM e BDM pelo campo title do usuário; se ninguém
+// tiver o título (base antiga), cai de volta para a lista completa.
+const byTitle = (list, t) => {
+  const f = (list || []).filter(u => (u.title || '').toUpperCase() === t);
+  return f.length ? f : (list || []);
+};
+
 function AttachmentsPanel({ entityType, entityId, toast }) {
   const [items, setItems] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -215,6 +222,7 @@ function AttachmentsPanel({ entityType, entityId, toast }) {
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.filename}</span>
           <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{fmtBytes(a.size_bytes)}</span>
           <span style={{ color: 'var(--muted)', fontSize: '11px' }}>{a.uploaded_by_name || ''}</span>
+          {a.drive_url && <a href={a.drive_url} target="_blank" rel="noreferrer" className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: '11px', textDecoration: 'none' }} title="Abrir no Google Drive">📁</a>}
           <button className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: '11px' }} onClick={() => downloadAttachment(a.id, a.filename).catch(e => toast?.(e.message, 'error'))}>⬇</button>
           {(me?.role === 'admin') && <button className="btn btn-secondary" style={{ padding: '3px 9px', fontSize: '11px', color: 'var(--danger, #c0392b)' }} onClick={() => del(a.id)}>✕</button>}
         </div>)}
@@ -654,11 +662,11 @@ function KanbanView({ toast }) {
       </select>
       <select className="form-input" style={{ maxWidth: '180px' }} value={filters.am_user_id} onChange={e => setFilters(p => ({ ...p, am_user_id: e.target.value }))}>
         <option value="">Todo AM</option>
-        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        {byTitle(users,'AM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
       </select>
       <select className="form-input" style={{ maxWidth: '180px' }} value={filters.bdm_user_id} onChange={e => setFilters(p => ({ ...p, bdm_user_id: e.target.value }))}>
         <option value="">Todo BDM</option>
-        {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        {byTitle(users,'BDM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
       </select>
       <select className="form-input" style={{ maxWidth: '200px' }} value={filters.client_id} onChange={e => setFilters(p => ({ ...p, client_id: e.target.value }))}>
         <option value="">Todo cliente</option>
@@ -850,10 +858,10 @@ function CreateTicketModal({ onClose, onCreated, toast }) {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             <div><label className="form-label">Quantidade *</label><input style={inp} type="number" min="1" step="1" value={f.quantity} onChange={e=>set('quantity',e.target.value)} /></div>
             <div><label className="form-label">Nº de Série</label><input style={inp} value={f.serial_number} onChange={e=>set('serial_number',e.target.value)} placeholder="SN-XXXXXX"/></div>
-            <div><label className="form-label">AM (Account Manager)</label><select style={inp} value={f.am_user_id} onChange={e=>set('am_user_id',e.target.value)}><option value="">— Nenhum —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+            <div><label className="form-label">AM (Account Manager)</label><select style={inp} value={f.am_user_id} onChange={e=>set('am_user_id',e.target.value)}><option value="">— Nenhum —</option>{byTitle(users,'AM').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-            <div><label className="form-label">BDM (Desenvolvimento de Negócios)</label><select style={inp} value={f.bdm_user_id} onChange={e=>set('bdm_user_id',e.target.value)}><option value="">— Nenhum —</option>{users.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
+            <div><label className="form-label">BDM (Desenvolvimento de Negócios)</label><select style={inp} value={f.bdm_user_id} onChange={e=>set('bdm_user_id',e.target.value)}><option value="">— Nenhum —</option>{byTitle(users,'BDM').map(u=><option key={u.id} value={u.id}>{u.name}</option>)}</select></div>
           </div>
         </div>
 
@@ -1146,11 +1154,11 @@ function TicketDetailModal({ id, onClose, onChanged, toast }) {
             <div className="form-row">
               <div className="form-group"><label className="form-label">AM (Account Manager)</label>
                 <select className="form-input" value={edit.am_user_id} onChange={e => setEdit(p => ({ ...p, am_user_id: e.target.value }))}>
-                  <option value="">— Nenhum —</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  <option value="">— Nenhum —</option>{byTitle(users,'AM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select></div>
               <div className="form-group"><label className="form-label">BDM</label>
                 <select className="form-input" value={edit.bdm_user_id} onChange={e => setEdit(p => ({ ...p, bdm_user_id: e.target.value }))}>
-                  <option value="">— Nenhum —</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  <option value="">— Nenhum —</option>{byTitle(users,'BDM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select></div>
             </div>
             <div className="form-row">
@@ -1550,6 +1558,8 @@ function ComplaintDetailModal({ id, onClose, onChanged, toast }) {
           <span className="form-label">Histórico</span>
           <Timeline items={c.history} />
         </div>
+
+        <AttachmentsPanel entityType="complaint" entityId={c.id} toast={toast} />
       </div>
     </div>
   </div>;
@@ -2542,11 +2552,11 @@ function ClientFormModal({ client, onClose, onSaved, toast }) {
           <div className="form-row">
             <div className="form-group"><label className="form-label">Account Manager (AM)</label>
               <select className="form-input" value={f.account_manager_id} onChange={e => set('account_manager_id', e.target.value)}>
-                <option value="">Não atribuído</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                <option value="">Não atribuído</option>{byTitle(users,'AM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select></div>
             <div className="form-group"><label className="form-label">BDM</label>
               <select className="form-input" value={f.bdm_id} onChange={e => set('bdm_id', e.target.value)}>
-                <option value="">Não atribuído</option>{users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                <option value="">Não atribuído</option>{byTitle(users,'BDM').map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select></div>
           </div>
           <div className="form-group"><label className="form-label">Observações</label>
@@ -2804,6 +2814,7 @@ function CsatNpsView({ toast }) {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState('overview');
   const [openCreate, setOpenCreate] = useState(null); // 'csat' | 'nps' | 'link'
+  const [attachFor, setAttachFor] = useState(null); // link de pesquisa com modal de anexos aberto
   const [f, setF] = useState({ client_id: '', score: '', comment: '', collection_date: new Date().toISOString().slice(0,10), survey_type: 'csat' });
   const [busy, setBusy] = useState(false);
 
@@ -2887,8 +2898,8 @@ function CsatNpsView({ toast }) {
     </div>}
 
     {tab === 'links' && <div className="table-container"><table className="table">
-      <thead><tr><th>Cliente</th><th>Tipo</th><th>Criado em</th><th>Respondido?</th><th>Expira em</th><th>Envio</th></tr></thead>
-      <tbody>{!links.length ? <tr><td colSpan="6" style={{textAlign:'center',padding:'20px',color:'var(--muted)'}}>Nenhum link disparado ainda.</td></tr> :
+      <thead><tr><th>Cliente</th><th>Tipo</th><th>Criado em</th><th>Respondido?</th><th>Expira em</th><th>Envio</th><th>Anexos</th></tr></thead>
+      <tbody>{!links.length ? <tr><td colSpan="7" style={{textAlign:'center',padding:'20px',color:'var(--muted)'}}>Nenhum link disparado ainda.</td></tr> :
         links.map(l => <tr key={l.id}>
           <td>{l.client_name}</td><td><Pill>{(l.survey_type||'').toUpperCase()}</Pill></td>
           <td style={{fontSize:'11px',color:'var(--muted)'}}>{formatDate(l.created_at)}</td>
@@ -2900,8 +2911,22 @@ function CsatNpsView({ toast }) {
             try { await api(`/survey-links/${l.id}/send`, 'POST', { email }); toast?.(`Pesquisa enviada para ${email}.`); }
             catch(err) { toast?.(err.message, 'error'); }
           }}>📧 Enviar</button>}</td>
+          <td><button className="btn btn-sm btn-outline" onClick={() => setAttachFor(l)}>📎</button></td>
         </tr>)}
       </tbody></table></div>}
+
+    {attachFor && <div className="modal" onClick={e => e.target === e.currentTarget && setAttachFor(null)}>
+      <div className="modal-content" style={{ maxWidth: '520px' }}>
+        <div className="modal-hdr">
+          <div><div className="modal-title">📎 Anexos da Pesquisa — {attachFor.client_name}</div>
+            <div style={{ fontSize: '11.5px', color: 'var(--muted)' }}>{(attachFor.survey_type||'').toUpperCase()} · criada em {formatDate(attachFor.created_at)}</div></div>
+          <button className="close-btn" onClick={() => setAttachFor(null)}>×</button>
+        </div>
+        <div className="modal-body">
+          <AttachmentsPanel entityType="survey" entityId={attachFor.id} toast={toast} />
+        </div>
+      </div>
+    </div>}
 
     {openCreate && <div className="modal" onClick={e => e.target === e.currentTarget && setOpenCreate(null)}>
       <div className="modal-content" style={{ maxWidth: '480px' }}>

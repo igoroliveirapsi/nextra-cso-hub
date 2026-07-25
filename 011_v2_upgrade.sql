@@ -51,3 +51,22 @@ SELECT NULL, f.d::date, f.n FROM (VALUES
   ('2026-12-25','Natal')
 ) AS f(d,n)
 WHERE NOT EXISTS (SELECT 1 FROM holidays);
+
+-- 6. Relatório de recorrência de RMA passa a agrupar pelo catálogo de
+--    produtos quando o RMA tem product_id (dado limpo, argumento de rebate
+--    defensável junto ao fornecedor), com fallback para texto no legado.
+DROP VIEW IF EXISTS view_rma_recurrence;
+CREATE VIEW view_rma_recurrence AS
+SELECT
+  COALESCE('cat:' || rma.product_id::text, COALESCE(rma.product_code, rma.product_name)) AS product_key,
+  COALESCE(pc.name, rma.product_name)  AS product_name,
+  COALESCE(pc.code, rma.product_code)  AS product_code,
+  rma.supplier_id,
+  sp.name AS supplier_name,
+  COUNT(*)::int AS count
+FROM rma
+LEFT JOIN product_catalog pc ON pc.id = rma.product_id
+LEFT JOIN suppliers sp ON sp.id = rma.supplier_id
+GROUP BY 1, 2, 3, rma.supplier_id, sp.name
+HAVING COUNT(*) > 1
+ORDER BY count DESC;

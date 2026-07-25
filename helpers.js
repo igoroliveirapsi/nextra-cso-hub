@@ -9,7 +9,7 @@
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test_secret_nao_usar_em_producao';
 process.env.NODE_ENV = process.env.NODE_ENV || 'test';
 
-const { buildApp } = require('../server.js');
+const { buildApp } = require('./server.js');
 
 async function makeApp() {
   const app = await buildApp();

@@ -30,15 +30,26 @@ test('clientes centralizados e reclamações', async (t) => {
   });
 
   await t.test('impede duplicidade de CNPJ entre clientes', async () => {
-    // Gera um CNPJ com 14 dígitos únicos por execução (o backend valida
-    // apenas formato de 14 dígitos e unicidade, não dígito verificador —
-    // ver POST /clients em server.js).
-    const unique = String(Date.now()).slice(-8);
-    const cnpj = `99.${unique.slice(0,3)}.${unique.slice(3,6)}/0001-${unique.slice(6,8)}`;
+    // v2.0: o backend agora valida dígito verificador (isValidCNPJSrv),
+    // então o teste gera um CNPJ matematicamente válido e único por execução.
+    const makeValidCnpj = () => {
+      const base = ('99' + String(Date.now()).slice(-6) + '0001').split('').map(Number); // 12 dígitos
+      const dv = (digits) => {
+        const w = digits.length === 12 ? [5,4,3,2,9,8,7,6,5,4,3,2] : [6,5,4,3,2,9,8,7,6,5,4,3,2];
+        const s = digits.reduce((acc, d, i) => acc + d * w[i], 0);
+        const r = s % 11; return r < 2 ? 0 : 11 - r;
+      };
+      const d1 = dv(base); const d2 = dv([...base, d1]);
+      return [...base, d1, d2].join('');
+    };
+    const cnpj = makeValidCnpj();
     const first = await app.inject({ method: 'POST', url: '/api/v1/clients', headers: h, payload: { name: 'Empresa A', cnpj } });
     assert.equal(first.statusCode, 201, first.body);
     const second = await app.inject({ method: 'POST', url: '/api/v1/clients', headers: h, payload: { name: 'Empresa B (CNPJ duplicado)', cnpj } });
     assert.equal(second.statusCode, 409);
+    // E rejeita CNPJ com dígito verificador inválido:
+    const bad = await app.inject({ method: 'POST', url: '/api/v1/clients', headers: h, payload: { name: 'Empresa C', cnpj: '12.345.678/0001-99' } });
+    assert.equal(bad.statusCode, 400);
   });
 
   await t.test('cria reclamação vinculada ao cliente central por client_id', async () => {
