@@ -16,6 +16,7 @@ const MIGRATIONS = [
   '010_operational_flow_enhancements.sql',
   '011_v2_upgrade.sql',
   '012_am_bdm_and_attachments_everywhere.sql',
+  '013_app_settings.sql',
 ];
 
 async function migrate() {

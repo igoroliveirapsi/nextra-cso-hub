@@ -3568,6 +3568,50 @@ function ImportTab({ toast }) {
   </div>;
 }
 
+// ── v2.2: Integrações — Google Drive ──────────────────────────
+function IntegrationsTab({ toast }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = async () => { try { setSt(await api('/drive/status')); } catch(e) { toast?.(e.message, 'error'); } };
+  useEffect(() => { load(); }, []);
+  const connect = async () => {
+    setBusy(true);
+    try { const { url } = await api('/drive/oauth/url'); window.location.href = url; }
+    catch(e) { toast?.(e.message, 'error'); setBusy(false); }
+  };
+  const disconnect = async () => {
+    if (!window.confirm('Desconectar o Google Drive? Os anexos continuam no sistema; apenas o espelhamento para.')) return;
+    try { await api('/drive/disconnect', 'POST'); toast?.('Google Drive desconectado.'); await load(); }
+    catch(e) { toast?.(e.message, 'error'); }
+  };
+  if (!st) return <p style={{ fontSize: '12.5px', color: 'var(--muted)' }}>Carregando…</p>;
+  return <div className="card" style={{ maxWidth: '640px' }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+      <span style={{ fontSize: '22px' }}>📁</span>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: '14px' }}>Google Drive</div>
+        <div style={{ fontSize: '11.5px', color: 'var(--muted)' }}>Espelha os anexos em pastas por atendimento (CHAMADO-XXX, RMA-XXX…)</div>
+      </div>
+    </div>
+    {!st.mode && <div style={{ fontSize: '12.5px', background: 'var(--bg)', padding: '12px', borderRadius: '8px' }}>
+      ⚙️ Para ativar, configure <b>GOOGLE_OAUTH_CLIENT_ID</b> e <b>GOOGLE_OAUTH_CLIENT_SECRET</b> nas variáveis do Railway e recarregue esta página.
+    </div>}
+    {st.mode === 'sa' && <div style={{ fontSize: '12.5px' }}>
+      Modo: <Pill>Conta de Serviço</Pill> — {st.account || ''}
+    </div>}
+    {st.mode === 'oauth' && !st.connected && <div>
+      <p style={{ fontSize: '12.5px', marginBottom: '12px' }}>Status: <span style={{ color: 'var(--muted)', fontWeight: 600 }}>● Não conectado</span></p>
+      <button className="btn btn-primary" disabled={busy} onClick={connect}>{busy ? 'Redirecionando…' : '🔗 Conectar Google Drive'}</button>
+      <p style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px' }}>Você será levado à tela do Google para autorizar. Use a conta que será dona das pastas.</p>
+    </div>}
+    {st.mode === 'oauth' && st.connected && <div>
+      <p style={{ fontSize: '12.5px', marginBottom: '6px' }}>Status: <span style={{ color: 'var(--ok)', fontWeight: 700 }}>● Conectado</span>{st.account ? <span style={{ color: 'var(--muted)' }}> — {st.account}</span> : null}</p>
+      {st.root_link && <p style={{ fontSize: '12.5px', marginBottom: '12px' }}><a href={st.root_link} target="_blank" rel="noreferrer" style={{ color: 'var(--pd)', fontWeight: 600 }}>Abrir pasta "Nextra CSO Hub — Atendimentos" no Drive ↗</a></p>}
+      <button className="btn btn-secondary" onClick={disconnect}>Desconectar</button>
+    </div>}
+  </div>;
+}
+
 function SettingsView({ toast }) {
   const me = getUser();
   const isAdmin = me?.role === 'admin';
@@ -3596,11 +3640,13 @@ function SettingsView({ toast }) {
       <div className={`tabbar-item ${tab==='my'?'active':''}`} onClick={() => setTab('my')}>Minha Conta</div>
       <div className={`tabbar-item ${tab==='products'?'active':''}`} onClick={() => setTab('products')}>Produtos</div>
       {isAdmin && <div className={`tabbar-item ${tab==='import'?'active':''}`} onClick={() => setTab('import')}>Importar CSV</div>}
+      {isAdmin && <div className={`tabbar-item ${tab==='integrations'?'active':''}`} onClick={() => setTab('integrations')}>Integrações</div>}
       {isAdmin && <div className={`tabbar-item ${tab==='system'?'active':''}`} onClick={() => setTab('system')}>Sistema</div>}
     </div>
 
     {tab === 'products' && <ProductsTab toast={toast} />}
     {tab === 'import' && (isAdmin ? <ImportTab toast={toast} /> : <p style={{ fontSize: '12.5px' }}>Apenas administradores.</p>)}
+    {tab === 'integrations' && (isAdmin ? <IntegrationsTab toast={toast} /> : <p style={{ fontSize: '12.5px' }}>Apenas administradores.</p>)}
 
     {tab === 'users' && <>
       {!isAdmin ? <div style={{ padding:'20px', background:'var(--pbg)', borderRadius:'12px', fontSize:'13px', color:'var(--pd)' }}>⚠️ Apenas administradores podem gerenciar usuários.</div> : <>

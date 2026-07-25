@@ -33,35 +33,87 @@ const JWT_EXPIRES = process.env.JWT_EXPIRES_IN || '8h';
 const signToken   = (payload) => jwt.sign({ ...payload, jti: crypto.randomUUID() }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 const verifyToken = (token)   => jwt.verify(token, JWT_SECRET);
 
-// ── v2.1: Google Drive (opcional) ──────────────────────────────
+// ── v2.2: Google Drive (opcional, modo duplo) ──────────────────
 // Espelha cada anexo numa pasta por atendimento dentro do Drive.
-// Ativa quando GOOGLE_SA_EMAIL, GOOGLE_SA_PRIVATE_KEY e DRIVE_ROOT_FOLDER_ID
-// estiverem configuradas no Railway. Sem elas, os anexos continuam
-// funcionando normalmente no Postgres — o Drive é só um espelho.
+// MODO OAUTH (recomendado p/ Gmail pessoal): configure GOOGLE_OAUTH_CLIENT_ID
+//   e GOOGLE_OAUTH_CLIENT_SECRET no Railway e conecte a conta em
+//   Configurações → Integrações. Os arquivos ficam na conta conectada
+//   (cota de 15GB dela) e a pasta-raiz "Nextra CSO Hub — Atendimentos"
+//   é criada automaticamente pelo próprio sistema.
+// MODO CONTA DE SERVIÇO (p/ Workspace/Drive Compartilhado): GOOGLE_SA_EMAIL,
+//   GOOGLE_SA_PRIVATE_KEY e DRIVE_ROOT_FOLDER_ID.
+// Sem nenhum dos dois, os anexos continuam funcionando normalmente no
+// Postgres — o Drive é só um espelho e nunca bloqueia o upload.
 let _driveToken = null, _driveTokenExp = 0;
+let _appSettingsCache = {};
 
-function driveConfigured() {
-  return !!(process.env.GOOGLE_SA_EMAIL && process.env.GOOGLE_SA_PRIVATE_KEY && process.env.DRIVE_ROOT_FOLDER_ID);
+async function getSetting(key) {
+  try {
+    const { rows } = await db.query('SELECT value FROM app_settings WHERE key=$1', [key]);
+    return rows.length ? rows[0].value : null;
+  } catch { return null; }
 }
+async function setSetting(key, value) {
+  await db.query(
+    `INSERT INTO app_settings (key,value,updated_at) VALUES ($1,$2,NOW())
+     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`, [key, value]);
+  _appSettingsCache[key] = value;
+}
+async function delSetting(key) {
+  await db.query('DELETE FROM app_settings WHERE key=$1', [key]).catch(() => {});
+  delete _appSettingsCache[key];
+}
+
+function driveMode() {
+  if (process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET) return 'oauth';
+  if (process.env.GOOGLE_SA_EMAIL && process.env.GOOGLE_SA_PRIVATE_KEY && process.env.DRIVE_ROOT_FOLDER_ID) return 'sa';
+  return null;
+}
+
+async function driveConfigured() {
+  const mode = driveMode();
+  if (mode === 'sa') return true;
+  if (mode === 'oauth') {
+    if (_appSettingsCache.drive_refresh_token) return true;
+    const t = await getSetting('drive_refresh_token');
+    if (t) { _appSettingsCache.drive_refresh_token = t; return true; }
+    return false;
+  }
+  return false;
+}
+
+function invalidateDriveToken() { _driveToken = null; _driveTokenExp = 0; }
 
 async function getDriveToken() {
   if (_driveToken && Date.now() < _driveTokenExp - 60000) return _driveToken;
-  const now = Math.floor(Date.now() / 1000);
-  const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
-  const unsigned = b64u({ alg: 'RS256', typ: 'JWT' }) + '.' + b64u({
-    iss: process.env.GOOGLE_SA_EMAIL,
-    scope: 'https://www.googleapis.com/auth/drive',
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now, exp: now + 3600,
-  });
-  // No Railway a chave é colada com \n literais — normaliza para quebras reais.
-  const pem = process.env.GOOGLE_SA_PRIVATE_KEY.replace(/\\n/g, '\n');
-  const signature = crypto.sign('RSA-SHA256', Buffer.from(unsigned), pem).toString('base64url');
+  const mode = driveMode();
+  let body;
+  if (mode === 'oauth') {
+    const refresh = _appSettingsCache.drive_refresh_token || await getSetting('drive_refresh_token');
+    if (!refresh) throw new Error('Drive não conectado (Configurações → Integrações).');
+    body = new URLSearchParams({
+      grant_type: 'refresh_token', refresh_token: refresh,
+      client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+      client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    });
+  } else {
+    const now = Math.floor(Date.now() / 1000);
+    const b64u = (o) => Buffer.from(JSON.stringify(o)).toString('base64url');
+    const unsigned = b64u({ alg: 'RS256', typ: 'JWT' }) + '.' + b64u({
+      iss: process.env.GOOGLE_SA_EMAIL,
+      scope: 'https://www.googleapis.com/auth/drive',
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now, exp: now + 3600,
+    });
+    // No Railway a chave é colada com \n literais — normaliza para quebras reais.
+    const pem = process.env.GOOGLE_SA_PRIVATE_KEY.replace(/\\n/g, '\n');
+    const signature = crypto.sign('RSA-SHA256', Buffer.from(unsigned), pem).toString('base64url');
+    body = new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + signature });
+  }
   const r = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: unsigned + '.' + signature }),
-    signal: AbortSignal.timeout(10000),
+    body, signal: AbortSignal.timeout(10000),
   });
   if (!r.ok) throw new Error(`Drive auth: HTTP ${r.status}`);
   const d = await r.json();
@@ -70,10 +122,29 @@ async function getDriveToken() {
   return _driveToken;
 }
 
+// Pasta-raiz: no modo SA vem do env; no modo OAuth é criada pelo app na
+// primeira vez ("Nextra CSO Hub — Atendimentos") e memorizada no banco.
+async function driveRootFolder() {
+  if (driveMode() === 'sa') return process.env.DRIVE_ROOT_FOLDER_ID;
+  let id = _appSettingsCache.drive_root_folder_id || await getSetting('drive_root_folder_id');
+  if (id) { _appSettingsCache.drive_root_folder_id = id; return id; }
+  const token = await getDriveToken();
+  const created = await (await fetch('https://www.googleapis.com/drive/v3/files?fields=id,webViewLink', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Nextra CSO Hub — Atendimentos', mimeType: 'application/vnd.google-apps.folder' }),
+    signal: AbortSignal.timeout(10000),
+  })).json();
+  if (!created.id) throw new Error('Drive: falha ao criar pasta-raiz');
+  await setSetting('drive_root_folder_id', created.id);
+  if (created.webViewLink) await setSetting('drive_root_link', created.webViewLink);
+  return created.id;
+}
+
 // Encontra (ou cria) a pasta do atendimento dentro da pasta-raiz do Hub.
 async function driveEnsureFolder(name) {
   const token = await getDriveToken();
-  const root = process.env.DRIVE_ROOT_FOLDER_ID;
+  const root = await driveRootFolder();
   const q = encodeURIComponent(`name='${name.replace(/'/g, "\\'")}' and '${root}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`);
   const found = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
     headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000),
@@ -113,12 +184,13 @@ const DRIVE_FOLDER_PREFIX = { ticket: 'CHAMADO', return: 'DEVOLUCAO', rma: 'RMA'
 
 // Best-effort: falha do Drive nunca derruba o upload principal (Postgres).
 async function driveMirror(etype, eid, filename, mime, buffer) {
-  if (!driveConfigured()) return null;
+  if (!(await driveConfigured())) return null;
   try {
     const folderId = await driveEnsureFolder(`${DRIVE_FOLDER_PREFIX[etype] || etype.toUpperCase()}-${eid}`);
     return await driveUploadFile(folderId, filename, mime, buffer);
   } catch (e) {
     console.error('driveMirror:', e.message);
+    if (String(e.message).includes('401')) invalidateDriveToken();
     return null;
   }
 }
@@ -758,6 +830,89 @@ load();
     });
 
     // ═══════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // v2.2 — GOOGLE DRIVE: conexão OAuth e status
+    // ═══════════════════════════════════════════════════════════
+    const driveRedirectUri = (req) => {
+      const base = (process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.headers.host}`).replace(/\/$/, '');
+      return `${base}/api/v1/drive/oauth/callback`;
+    };
+
+    v1.get('/drive/status', { preHandler: [authenticate] }, async () => {
+      const mode = driveMode();
+      const connected = await driveConfigured();
+      const root_link = mode === 'oauth' ? (await getSetting('drive_root_link')) : null;
+      const account = mode === 'oauth' ? (await getSetting('drive_account_email')) : (process.env.GOOGLE_SA_EMAIL || null);
+      return { mode, connected, root_link, account };
+    });
+
+    v1.get('/drive/oauth/url', { preHandler: [authorize('admin')] }, async (req, reply) => {
+      if (driveMode() !== 'oauth')
+        return reply.code(400).send({ error:'NOT_CONFIGURED', message:'Configure GOOGLE_OAUTH_CLIENT_ID e GOOGLE_OAUTH_CLIENT_SECRET no Railway primeiro.', status:400 });
+      const state = jwt.sign({ purpose: 'drive_oauth' }, JWT_SECRET, { expiresIn: '15m' });
+      const params = new URLSearchParams({
+        client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+        redirect_uri: driveRedirectUri(req),
+        response_type: 'code',
+        scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/userinfo.email',
+        access_type: 'offline',
+        prompt: 'consent',
+        state,
+      });
+      return { url: `https://accounts.google.com/o/oauth2/v2/auth?${params}`, redirect_uri: driveRedirectUri(req) };
+    });
+
+    v1.get('/drive/oauth/callback', async (req, reply) => {
+      const { code, state, error } = req.query || {};
+      const page = (title, msg, ok) => reply.type('text/html').send(
+        `<!doctype html><meta charset="utf-8"><body style="font-family:Arial;background:#0f0f1a;color:#eee;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+         <div style="text-align:center;max-width:420px"><div style="font-size:42px">${ok ? '✅' : '⚠️'}</div>
+         <h2>${title}</h2><p style="color:#aaa;font-size:14px">${msg}</p>
+         <a href="/" style="color:#e94560;font-weight:bold">Voltar ao Hub</a></div></body>`);
+      if (error) return page('Conexão cancelada', 'A autorização no Google foi cancelada. Tente novamente em Configurações → Integrações.', false);
+      try { jwt.verify(state, JWT_SECRET); } catch { return page('Link expirado', 'O link de conexão expirou (15 min). Gere um novo em Configurações → Integrações.', false); }
+      if (!code) return page('Código ausente', 'O Google não devolveu o código de autorização.', false);
+      try {
+        const r = await fetch('https://oauth2.googleapis.com/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            grant_type: 'authorization_code', code,
+            client_id: process.env.GOOGLE_OAUTH_CLIENT_ID,
+            client_secret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+            redirect_uri: driveRedirectUri(req),
+          }),
+          signal: AbortSignal.timeout(10000),
+        });
+        const d = await r.json();
+        if (!r.ok || !d.refresh_token) throw new Error(d.error_description || d.error || `HTTP ${r.status} (sem refresh_token)`);
+        await setSetting('drive_refresh_token', d.refresh_token);
+        invalidateDriveToken();
+        // Guarda o e-mail da conta conectada (informativo)
+        try {
+          const ui = await (await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+            headers: { Authorization: `Bearer ${d.access_token}` }, signal: AbortSignal.timeout(8000),
+          })).json();
+          if (ui.email) await setSetting('drive_account_email', ui.email);
+        } catch {}
+        // Cria a pasta-raiz já na conexão, para o link aparecer no painel
+        try { await driveRootFolder(); } catch (e) { console.error('drive root:', e.message); }
+        return page('Google Drive conectado!', 'A partir de agora, todo anexo será espelhado automaticamente na pasta "Nextra CSO Hub — Atendimentos" do Drive.', true);
+      } catch (e) {
+        console.error('drive oauth callback:', e.message);
+        return page('Falha na conexão', `Erro: ${e.message}. Verifique o Client ID/Secret e tente novamente.`, false);
+      }
+    });
+
+    v1.post('/drive/disconnect', { preHandler: [authorize('admin')] }, async () => {
+      await delSetting('drive_refresh_token');
+      await delSetting('drive_root_folder_id');
+      await delSetting('drive_root_link');
+      await delSetting('drive_account_email');
+      invalidateDriveToken();
+      return { disconnected: true };
+    });
+
     // v2.0 — DISPARO DE PESQUISA CSAT/NPS POR E-MAIL
     // ═══════════════════════════════════════════════════════════
     v1.post('/survey-links/:id/send', { preHandler: [authenticate] }, async (req, reply) => {
