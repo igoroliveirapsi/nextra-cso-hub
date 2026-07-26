@@ -1274,8 +1274,9 @@ load();
             order_number, nf_number, order_value, revenue_at_risk,
             product_name_snap, serial_number_snap, quantity, product_group, brand,
             is_vip, is_recurrence,
+            contact_name, contact_email,
             sla_deadline, sla_state, status, approval_status, reopen_count)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::user_role[],$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,'ok','new','pending',0)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::user_role[],$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$29,$30,$28,'ok','new','pending',0)
           RETURNING *`,
           [ticketId, d.business_unit_id||'led', d.client_id||null, d.client_name, d.cnpj||null, user.sub,
            d.am_user_id||null, d.bdm_user_id||null,
@@ -1284,7 +1285,8 @@ load();
            d.description, d.expectation||null, d.previous_action||null,
            d.order_number||null, String(d.nf_number).trim(), d.order_value||null, d.revenue_at_risk||0,
            d.product||null, d.serial_number||null, qty, d.product_group||null, d.brand||null,
-           d.is_vip||false, d.is_recurrence||false, slaDeadline.toISOString()]
+           d.is_vip||false, d.is_recurrence||false, slaDeadline.toISOString(),
+           d.contact_name||null, (d.contact_email||'').trim()||null]
         );
         await db.query(`INSERT INTO ticket_history (ticket_id,user_id,action) VALUES ($1,$2,'ticket_aberto')`, [ticketId, user.sub]);
         // v3.0: e-mail de ação para as áreas acionadas + acompanhamento ao AM/BDM
@@ -1319,7 +1321,7 @@ load();
       const d = req.body || {};
       const allowed = ['root_cause_category','root_cause_description','resolution','preventive_action',
         'area_responsible','resp_user_id','am_user_id','bdm_user_id','manager_user_id',
-        'revenue_at_risk','order_number','order_value','nf_number',
+        'revenue_at_risk','order_number','order_value','nf_number','contact_name','contact_email',
         'client_name','client_cnpj','expectation','previous_action','product_name_snap','serial_number_snap',
         'quantity','product_group','brand','description','criticality'];
       // NF: se enviada, não pode ser vazia/espaços (obrigatória o tempo todo, inclusive na edição).
@@ -1431,7 +1433,8 @@ load();
         (async () => {
           try {
             const { rows:[cli] } = await db.query('SELECT id,name,email FROM clients WHERE id=$1', [u.client_id]);
-            if (!cli?.email) return;
+            const destino = (u.contact_email || '').trim() || cli?.email;
+            if (!destino) return;
             // v3.1: cooldown — o mesmo cliente não recebe pesquisa automática 2x em 30 dias
             const { rows:[cd] } = await db.query(
               `SELECT COUNT(*)::int AS n FROM survey_links WHERE client_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [cli.id]);
@@ -1440,7 +1443,7 @@ load();
             await db.query(`INSERT INTO survey_links (token,survey_type,client_id,business_unit_id,ticket_id,created_by)
               VALUES ($1,'csat',$2,$3,$4,$5)`, [stoken, cli.id, u.business_unit_id||'led', u.id, user.sub]);
             const surl = `${hubUrl(req)}/survey/${stoken}`;
-            await sendEmail(cli.email, `Nextra — Como foi o atendimento do chamado ${u.id}?`,
+            await sendEmail(destino, `Nextra — Como foi o atendimento do chamado ${u.id}?`,
               emailTemplate('Seu atendimento foi encerrado. Como foi a experiência?',
                 [['Chamado', u.id], ['Cliente', cli.name]], surl).replace('Abrir no Hub','Responder pesquisa (1 min)'));
           } catch (e) { console.error('autoCsat:', e.message); }

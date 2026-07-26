@@ -799,7 +799,7 @@ function KanbanView({ toast }) {
 function CreateTicketModal({ onClose, onCreated, toast }) {
   const [staged, setStaged] = useState([]);
   const [f, setF] = useState({
-    business_unit_id: 'led', client_id: '', client_name: '', cnpj: '', channel: 'whatsapp',
+    business_unit_id: 'led', client_id: '', client_name: '', cnpj: '', channel: 'whatsapp', contact_name: '', contact_email: '',
     occurrence_type: 'technical_support', criticality: 'medium',
     area_responsible: 'support', notify_areas: [],
     product: '', product_group: '', brand: '', quantity: '1', serial_number: '', order_number: '', nf_number: '',
@@ -827,7 +827,7 @@ function CreateTicketModal({ onClose, onCreated, toast }) {
 
   const selectClient = (clientId) => {
     const c = clients.find(cl => String(cl.id) === String(clientId));
-    setF(p => ({ ...p, client_id: clientId, client_name: c ? c.name : p.client_name, cnpj: c && c.cnpj ? formatCNPJ(c.cnpj) : p.cnpj }));
+    setF(p => ({ ...p, client_id: clientId, client_name: c ? c.name : p.client_name, cnpj: c && c.cnpj ? formatCNPJ(c.cnpj) : p.cnpj, contact_email: p.contact_email || c?.email || '' }));
   };
 
   const quickCreateClient = async () => {
@@ -928,6 +928,13 @@ function CreateTicketModal({ onClose, onCreated, toast }) {
                 </span>
               )}
             </div>
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.4fr', gap: '12px', marginTop: '12px' }}>
+            <div><label className="form-label">Nome do Contato</label>
+              <input style={inp} value={f.contact_name} onChange={e=>set('contact_name',e.target.value)} placeholder="Quem abriu a solicitação" /></div>
+            <div><label className="form-label">E-mail do Contato</label>
+              <input style={inp} type="email" value={f.contact_email} onChange={e=>set('contact_email',e.target.value)} placeholder="Recebe a pesquisa de satisfação no encerramento" />
+              {!f.contact_email && <span style={{ fontSize: '10.5px', color: 'var(--muted)' }}>Sem e-mail aqui nem no cadastro do cliente, a pesquisa automática não é enviada.</span>}</div>
           </div>
           <div style={{ marginTop: '10px', display: 'flex', gap: '20px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: '7px', fontSize: '13px', color: 'var(--mid)', cursor: 'pointer' }}><input type="checkbox" checked={f.is_vip} onChange={e=>set('is_vip',e.target.checked)}/> ⭐ Cliente VIP</label>
