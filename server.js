@@ -227,6 +227,23 @@ async function notifyAdmins(type, message, ticketId = null, linkView = null) {
   await notifyUsers(rows.map(r => r.id), type, message, ticketId, linkView);
 }
 
+// v3.0.1: recalcula a média de CSAT do cliente após cada resposta
+async function refreshClientCsat(clientId) {
+  if (!clientId) return;
+  await db.query(`UPDATE clients SET csat_avg = sub.avg, updated_at = NOW()
+    FROM (SELECT ROUND(AVG(score)::numeric, 1) AS avg FROM csat WHERE client_id = $1) sub
+    WHERE clients.id = $1`, [clientId]).catch(() => {});
+}
+
+// v3.0.1: PATCHes com whitelist passam a declarar o que foi ignorado,
+// em vez de descartar em silêncio (e registram no log do servidor).
+function withIgnored(row, body, allowed) {
+  const unknown = Object.keys(body || {}).filter(k => !allowed.includes(k));
+  if (!unknown.length) return row;
+  console.warn(`PATCH ignorou campos desconhecidos: ${unknown.join(', ')}`);
+  return { ...row, _ignored_fields: unknown, _hint: 'Campos fora da whitelist desta rota — verifique o nome.' };
+}
+
 // ── v3.0: E-mails transacionais ─────────────────────────────────
 const TICKET_STATUS_LABEL_SRV = {
   new:'Novo', in_triage:'Em triagem', awaiting_info:'Aguardando informações',
@@ -303,6 +320,11 @@ function isValidCNPJSrv(raw) {
 // estiverem vazias/indisponíveis, cai no comportamento antigo (horas corridas).
 async function computeSlaDeadline(hours) {
   try {
+    // v3.0.1: toda a matemática de expediente roda no fuso comercial
+    // (BUSINESS_TZ_OFFSET, padrão -03:00 = Brasília), não no UTC do servidor.
+    const offStr = process.env.BUSINESS_TZ_OFFSET || '-03:00';
+    const om = /^([+-])(\d{2}):(\d{2})$/.exec(offStr) || ['', '-', '03', '00'];
+    const OFF = (om[1] === '-' ? -1 : 1) * (parseInt(om[2]) * 60 + parseInt(om[3])) * 60000;
     const [bh, hol] = await Promise.all([
       db.query(`SELECT day_of_week, start_time, end_time FROM business_hours WHERE is_active AND business_unit_id IS NULL`),
       db.query(`SELECT date FROM holidays`),
@@ -312,23 +334,24 @@ async function computeSlaDeadline(hours) {
     for (const r of bh.rows) byDow[r.day_of_week] = r; // 1 janela por dia (padrão)
     const holidays = new Set(hol.rows.map(r => new Date(r.date).toISOString().slice(0, 10)));
     let remaining = Math.round(hours * 60); // minutos úteis restantes
-    let cursor = new Date();
+    // cursor "deslocado": os acessores UTC passam a representar o relógio de parede local
+    let cursor = new Date(Date.now() + OFF);
     for (let guard = 0; guard < 400 && remaining > 0; guard++) {
       const dayKey = cursor.toISOString().slice(0, 10);
-      const win = byDow[cursor.getDay()];
+      const win = byDow[cursor.getUTCDay()];
       if (!win || holidays.has(dayKey)) { // dia sem expediente → pula para o próximo, 00:00
-        cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0); continue;
+        cursor = new Date(cursor); cursor.setUTCDate(cursor.getUTCDate() + 1); cursor.setUTCHours(0, 0, 0, 0); continue;
       }
       const [sh, sm] = String(win.start_time).split(':').map(Number);
       const [eh, em] = String(win.end_time).split(':').map(Number);
-      const start = new Date(cursor); start.setHours(sh, sm, 0, 0);
-      const end   = new Date(cursor); end.setHours(eh, em, 0, 0);
+      const start = new Date(cursor); start.setUTCHours(sh, sm, 0, 0);
+      const end   = new Date(cursor); end.setUTCHours(eh, em, 0, 0);
       const from = cursor > start ? cursor : start;
-      if (from >= end) { cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0); continue; }
+      if (from >= end) { cursor = new Date(cursor); cursor.setUTCDate(cursor.getUTCDate() + 1); cursor.setUTCHours(0, 0, 0, 0); continue; }
       const capacity = Math.floor((end - from) / 60000);
-      if (remaining <= capacity) return new Date(from.getTime() + remaining * 60000);
+      if (remaining <= capacity) return new Date(from.getTime() + remaining * 60000 - OFF); // volta ao tempo real
       remaining -= capacity;
-      cursor = new Date(cursor); cursor.setDate(cursor.getDate() + 1); cursor.setHours(0, 0, 0, 0);
+      cursor = new Date(cursor); cursor.setUTCDate(cursor.getUTCDate() + 1); cursor.setUTCHours(0, 0, 0, 0);
     }
     return new Date(Date.now() + hours * 3600000); // fallback de segurança
   } catch { return new Date(Date.now() + hours * 3600000); }
@@ -923,9 +946,9 @@ load();
       const [torre, tickets, complaints, returns_, rma_] = await Promise.all([
         safe(db.query(`SELECT COUNT(*)::int AS n FROM tickets WHERE status NOT IN ('closed','resolved') AND (criticality='critical' OR (sla_state NOT IN ('done','paused') AND sla_deadline < NOW()))`)),
         safe(db.query(`SELECT COUNT(*)::int AS n FROM tickets WHERE status NOT IN ('closed','resolved')`)),
-        safe(db.query(`SELECT COUNT(*)::int AS n FROM complaints WHERE status NOT IN ('closed','resolved','sanada')`)),
-        safe(db.query(`SELECT COUNT(*)::int AS n FROM returns WHERE status NOT IN ('completed','rejected','closed')`)),
-        safe(db.query(`SELECT COUNT(*)::int AS n FROM rma WHERE status NOT IN ('closed','completed')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM complaints WHERE status::text NOT IN ('closed','resolved','cancelled')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM returns WHERE status::text NOT IN ('rejected','closed','refund_or_credit_issued')`)),
+        safe(db.query(`SELECT COUNT(*)::int AS n FROM rma WHERE status::text NOT IN ('closed','completed','cancelled')`)),
       ]);
       return { torre: torre.rows[0].n, tickets: tickets.rows[0].n, complaints: complaints.rows[0].n, returns: returns_.rows[0].n, rma: rma_.rows[0].n };
     });
@@ -1088,6 +1111,15 @@ load();
          </div>`);
       if (!result.sent) return reply.code(400).send({ error:'EMAIL_NOT_SENT', message: result.reason, status:400 });
       return { sent: true, to: email };
+    });
+
+    // v3.0.1: exclusão de link de pesquisa (admin) — limpeza de testes/disparos errados
+    v1.delete('/survey-links/:id', { preHandler: [authorize('admin')] }, async (req, reply) => {
+      const { rows:[l] } = await db.query('SELECT id,responded FROM survey_links WHERE id=$1', [req.params.id]);
+      if (!l) return send404(reply);
+      await db.query('DELETE FROM survey_links WHERE id=$1', [req.params.id]);
+      await auditLog(req, 'delete', 'survey_links', String(req.params.id), l, null);
+      return { deleted: true, aviso: l.responded ? 'O link foi removido; a resposta já registrada permanece nos indicadores.' : null };
     });
 
     v1.post('/admin/wipe-demo-data', { preHandler: [authorize('admin')] }, async (req, reply) => {
@@ -1301,7 +1333,7 @@ load();
         }
         await client.query('COMMIT');
         await auditLog(req, 'update', 'tickets', id, t, u);
-        return u;
+        return withIgnored(u, d, allowed);
       } catch(e) {
         await client.query('ROLLBACK').catch(()=>{});
         return reply.code(400).send({ error:'UPDATE_FAILED', message:e.message, status:400 });
@@ -1627,7 +1659,7 @@ load();
           [req.params.id, ...fields.map(([,v])=>v)]);
         await db.query(`INSERT INTO return_history (return_id,user_id,action,note) VALUES ($1,$2,'análise de causa / custo atualizada',$3)`,
           [req.params.id, getUser(req).sub, d.root_cause_notes||d.reduction_action||null]);
-        return u;
+        return withIgnored(u, d, allowed);
       } catch(e) {
         return reply.code(400).send({ error:'UPDATE_FAILED', message:e.message, status:400 });
       }
@@ -1862,7 +1894,7 @@ load();
       const allowed = ['technical_notes','decision_notes','outcome_type','unit_cost',
         'rebate_applicable','rebate_value','rebate_status','supplier_id'];
       const fields = Object.entries(d).filter(([k])=>allowed.includes(k) && v_defined(d[k]));
-      if (!fields.length) { const {rows:[r]}=await db.query('SELECT * FROM rma WHERE id=$1',[req.params.id]); return r||send404(reply); }
+      if (!fields.length) { const {rows:[r]}=await db.query('SELECT * FROM rma WHERE id=$1',[req.params.id]); return r ? withIgnored(r, d, allowed) : send404(reply); }
       const set = fields.map(([k],i)=>`${k}=$${i+2}`).join(', ');
       try {
         const { rows:[u] } = await db.query(`UPDATE rma SET ${set},updated_at=NOW() WHERE id=$1 RETURNING *`,
@@ -1872,7 +1904,7 @@ load();
           await db.query(`INSERT INTO rma_history (rma_id,user_id,action,note) VALUES ($1,$2,'desfecho registrado',$3)`,
             [req.params.id, getUser(req).sub, d.outcome_type]);
         }
-        return u;
+        return withIgnored(u, d, allowed);
       } catch(e) {
         return reply.code(400).send({ error:'UPDATE_FAILED', message:e.message, status:400 });
       }
@@ -1962,7 +1994,7 @@ load();
         `UPDATE clients SET ${set}, updated_at=NOW() WHERE id=$1 RETURNING *`,
         [req.params.id, ...fields.map(([,v]) => v)]);
       if (!c) return send404(reply);
-      return c;
+      return withIgnored(c, req.body, allowed);
     });
 
     v1.get('/clients/:id/360', { preHandler: [authenticate] }, async (req, reply) => {
@@ -2055,6 +2087,7 @@ load();
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
         [d.client_id,d.business_unit_id||'led',d.score,d.comment||null,d.ticket_id||null,
          d.complaint_id||null,getUser(req).sub,d.collection_date||new Date().toISOString().slice(0,10)]);
+      await refreshClientCsat(d.client_id);
       return reply.code(201).send(c);
     });
 
@@ -2133,6 +2166,7 @@ load();
             [link.client_id, link.business_unit_id, score, comment||null]);
         }
         await db.query('UPDATE survey_links SET responded=TRUE, responded_at=NOW() WHERE id=$1', [link.id]);
+        if (link.survey_type === 'csat') await refreshClientCsat(link.client_id);
         return reply.code(201).send({ message:'Obrigado pela sua resposta!' });
       } catch(e) {
         return reply.code(400).send({ error:'SUBMIT_FAILED', message:e.message, status:400 });
