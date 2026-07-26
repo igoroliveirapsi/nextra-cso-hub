@@ -3860,7 +3860,41 @@ function SettingsView({ toast }) {
   </div>;
 }
 
+// v3.2: card de backup — status do último + disparo manual
+function BackupCard({ toast }) {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api('/admin/backup/status').then(setSt).catch(() => setSt({}));
+  useEffect(load, []);
+  const run = async () => {
+    setBusy(true);
+    try { const r = await api('/admin/backup', 'POST'); toast?.(`Backup concluído: ${r.tables} tabelas, ${(r.bytes/1024).toFixed(0)} KB → Drive.`); load(); }
+    catch(e) { toast?.(e.message, 'error'); }
+    finally { setBusy(false); }
+  };
+  return <div className="card" style={{ marginBottom: '16px' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+      <div>
+        <div style={{ fontWeight: 700, fontSize: '13px' }}>💾 Backup do banco de dados</div>
+        <div style={{ fontSize: '11.5px', color: 'var(--muted)', marginTop: '4px' }}>
+          Automático todo dia às 03:00 (Brasília) para a pasta BACKUPS do Drive · retenção de 30 arquivos · anexos entram como metadados (os arquivos já ficam espelhados no Drive).
+        </div>
+        <div style={{ fontSize: '11.5px', marginTop: '6px' }}>
+          {st === null ? 'Carregando…' : st.last_at
+            ? <>Último backup: <b>{new Date(st.last_at).toLocaleString('pt-BR')}</b>{st.last_bytes ? ` · ${(st.last_bytes/1024).toFixed(0)} KB` : ''}{st.last_link && <> · <a href={st.last_link} target="_blank" rel="noreferrer" style={{ color: 'var(--p)' }}>abrir no Drive</a></>}</>
+            : <span style={{ color: 'var(--danger, #c0392b)' }}>Nenhum backup realizado ainda.</span>}
+        </div>
+      </div>
+      <button className="btn btn-primary" disabled={busy} onClick={run}>{busy ? 'Gerando…' : '💾 Fazer backup agora'}</button>
+    </div>
+  </div>;
+}
+
 function SystemTab({ toast }) {
+  return <><BackupCard toast={toast} /><SystemTabInner toast={toast} /></>;
+}
+
+function SystemTabInner({ toast }) {
   const [status, setStatus] = useState(null);
   const [loading, setLoading] = useState(true);
   const [confirmText, setConfirmText] = useState('');

@@ -182,6 +182,86 @@ async function driveUploadFile(folderId, filename, mime, buffer) {
 
 const DRIVE_FOLDER_PREFIX = { ticket: 'CHAMADO', return: 'DEVOLUCAO', rma: 'RMA', complaint: 'RECLAMACAO', survey: 'PESQUISA' };
 
+// ── v3.2: BACKUP AUTOMÁTICO DO BANCO ────────────────────────────
+// Dump lógico diário (todas as tabelas em JSON gzip) para a pasta
+// BACKUPS do Drive, com retenção de 30 arquivos. Anexos entram só
+// como metadados — os arquivos em si já vivem espelhados no Drive.
+const zlib = require('zlib');
+let _backupRunning = false;
+
+async function driveListFolder(folderId) {
+  const token = await getDriveToken();
+  const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+  const r = await (await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)&pageSize=200&supportsAllDrives=true&includeItemsFromAllDrives=true`, {
+    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) })).json();
+  return r.files || [];
+}
+async function driveDeleteFile(fileId) {
+  const token = await getDriveToken();
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?supportsAllDrives=true`, {
+    method: 'DELETE', headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(10000) }).catch(() => {});
+}
+
+// Gera o dump: { tabela: [linhas...] } — attachments sem a coluna binária.
+async function buildDbDump() {
+  const { rows: tabs } = await db.query(
+    `SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename`);
+  const dump = { _meta: { generated_at: new Date().toISOString(), app: 'nextra-cso-hub', format: 1 } };
+  let totalRows = 0;
+  for (const { tablename } of tabs) {
+    if (tablename === 'attachments') {
+      const { rows } = await db.query(`SELECT id,entity_type,entity_id,filename,mime,size_bytes,drive_url,uploaded_by,created_at FROM attachments ORDER BY id`);
+      dump[tablename] = rows; totalRows += rows.length; continue;
+    }
+    const { rows } = await db.query(`SELECT * FROM "${tablename}"`);
+    dump[tablename] = rows; totalRows += rows.length;
+  }
+  const gz = zlib.gzipSync(Buffer.from(JSON.stringify(dump)), { level: 9 });
+  return { gz, tables: tabs.length, totalRows };
+}
+
+async function runBackup(motivo = 'agendado') {
+  if (_backupRunning) return { ok: false, reason: 'Backup já em andamento.' };
+  _backupRunning = true;
+  try {
+    if (!(await driveConfigured())) return { ok: false, reason: 'Drive não conectado — backup precisa do Google Drive (Configurações → Integrações).' };
+    const { gz, tables, totalRows } = await buildDbDump();
+    const folderId = await driveEnsureFolder('BACKUPS');
+    const nome = `cso-hub-backup-${new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10)}-${Date.now().toString(36)}.json.gz`;
+    const url = await driveUploadFile(folderId, nome, 'application/gzip', gz);
+    if (!url) throw new Error('upload retornou vazio');
+    await setSetting('backup_last_at', new Date().toISOString());
+    await setSetting('backup_last_link', url);
+    await setSetting('backup_last_bytes', String(gz.length));
+    // retenção: mantém os 30 mais recentes
+    try {
+      const files = (await driveListFolder(folderId)).filter(f => f.name.startsWith('cso-hub-backup-')).sort((a, b) => b.name.localeCompare(a.name));
+      for (const f of files.slice(30)) await driveDeleteFile(f.id);
+    } catch (e) { console.error('backupRetention:', e.message); }
+    console.log(`backup ${motivo}: ${nome} (${tables} tabelas, ${totalRows} linhas, ${(gz.length/1024).toFixed(0)}KB)`);
+    return { ok: true, file: nome, drive_url: url, tables, rows: totalRows, bytes: gz.length };
+  } catch (e) {
+    console.error('backup:', e.message);
+    await notifyAdmins('backup_failed', `⚠️ Backup automático falhou: ${e.message}`, null, 'settings').catch(() => {});
+    return { ok: false, reason: e.message };
+  } finally { _backupRunning = false; }
+}
+
+// Agendador: confere a cada 30 min; roda 1x/dia a partir das 03:00 (Brasília).
+async function backupScheduler() {
+  try {
+    const hourBrt = new Date(Date.now() - 3 * 3600000).getUTCHours();
+    if (hourBrt < 3) return;
+    const hoje = new Date(Date.now() - 3 * 3600000).toISOString().slice(0, 10);
+    const last = await getSetting('backup_last_at');
+    const lastDay = last ? new Date(new Date(last).getTime() - 3 * 3600000).toISOString().slice(0, 10) : null;
+    if (lastDay === hoje) return;
+    if (!(await driveConfigured())) return;
+    await runBackup('agendado');
+  } catch (e) { console.error('backupScheduler:', e.message); }
+}
+
+
 // Best-effort: falha do Drive nunca derruba o upload principal (Postgres).
 async function driveMirror(etype, eid, filename, mime, buffer) {
   if (!(await driveConfigured())) return null;
@@ -1144,6 +1224,22 @@ load();
       await auditLog(req, 'delete', 'survey_links', String(req.params.id), l, null);
       return { deleted: true, aviso: l.responded ? 'O link foi removido; a resposta já registrada permanece nos indicadores.' : null };
     });
+
+    // v3.2: backup sob demanda (admin). ?dry=1 só gera o dump e mede, sem subir.
+    v1.post('/admin/backup', { preHandler: [authorize('admin')] }, async (req, reply) => {
+      if (req.query?.dry === '1') {
+        const { gz, tables, totalRows } = await buildDbDump();
+        return { dry_run: true, tables, rows: totalRows, bytes: gz.length };
+      }
+      const r = await runBackup('manual');
+      if (!r.ok) return reply.code(400).send({ error:'BACKUP_FAILED', message: r.reason, status:400 });
+      return r;
+    });
+    v1.get('/admin/backup/status', { preHandler: [authorize('admin')] }, async () => ({
+      last_at: await getSetting('backup_last_at'),
+      last_link: await getSetting('backup_last_link'),
+      last_bytes: parseInt(await getSetting('backup_last_bytes') || '0') || null,
+    }));
 
     v1.post('/admin/wipe-demo-data', { preHandler: [authorize('admin')] }, async (req, reply) => {
       const { confirm } = req.body || {};
@@ -2597,6 +2693,8 @@ Responda APENAS com JSON válido, sem markdown, sem texto antes ou depois:
   if (process.env.NODE_ENV !== 'test') {
     slaSweep();
     setInterval(slaSweep, 5 * 60 * 1000).unref();
+    setInterval(backupScheduler, 30 * 60 * 1000).unref(); // v3.2: backup diário 03:00 BRT
+    setTimeout(backupScheduler, 90 * 1000).unref();       // primeira checagem logo após o boot
   }
 
   return app;
