@@ -2921,6 +2921,29 @@ function HealthScoreView({ toast }) {
 // CSAT / NPS
 // ══════════════════════════════════════════════════════════════
 
+// v3.1: relatório de motivos — transforma nota em alavanca operacional
+function ReasonsReportCard() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api('/surveys/reports/reasons').then(setD).catch(() => setD({ csat: [], nps: [] })); }, []);
+  if (!d) return null;
+  const neg = [...(d.csat||[]).filter(x => x.band === 'negativo'), ...(d.nps||[]).filter(x => x.band !== 'promotor')];
+  const pos = [...(d.csat||[]).filter(x => x.band === 'positivo'), ...(d.nps||[]).filter(x => x.band === 'promotor')];
+  const agg = (arr) => Object.entries(arr.reduce((a, x) => { a[x.reason] = (a[x.reason]||0) + x.n; return a; }, {})).sort((a,b) => b[1]-a[1]).slice(0, 6);
+  const negA = agg(neg), posA = agg(pos);
+  if (!negA.length && !posA.length) return null;
+  const maxN = Math.max(1, ...negA.map(x=>x[1]), ...posA.map(x=>x[1]));
+  const Bar = ({ label, n, color }) => <div style={{ marginBottom: '7px' }}>
+    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11.5px', marginBottom: '2px' }}><span>{label}</span><b>{n}</b></div>
+    <div style={{ height: '7px', background: 'var(--bg)', borderRadius: '4px' }}><div style={{ height: '100%', width: `${Math.round(n/maxN*100)}%`, background: color, borderRadius: '4px' }} /></div>
+  </div>;
+  return <div className="grid-2" style={{ marginBottom: '16px' }}>
+    <div className="card"><div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '10px' }}>📉 Onde dói (motivos das notas baixas)</div>
+      {!negA.length ? <p style={{ fontSize: '12px', color: 'var(--muted)' }}>Sem motivos negativos registrados.</p> : negA.map(([l, n]) => <Bar key={l} label={l} n={n} color="var(--danger, #c0392b)" />)}</div>
+    <div className="card"><div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '10px' }}>📈 O que encanta (motivos das notas altas)</div>
+      {!posA.length ? <p style={{ fontSize: '12px', color: 'var(--muted)' }}>Sem motivos positivos registrados.</p> : posA.map(([l, n]) => <Bar key={l} label={l} n={n} color="var(--ok, #27ae60)" />)}</div>
+  </div>;
+}
+
 function CsatNpsView({ toast }) {
   const [csatData, setCsatData] = useState({ data: [], csat_avg: null });
   const [npsData, setNpsData] = useState({ data: [], nps_score: null, promoters: 0, detractors: 0, neutrals: 0 });
@@ -2949,7 +2972,8 @@ function CsatNpsView({ toast }) {
     setBusy(true);
     try {
       if (openCreate === 'link') {
-        const { survey_url } = await api('/survey-links', 'POST', { client_id: parseInt(f.client_id), survey_type: f.survey_type });
+        const { survey_url, aviso_cooldown } = await api('/survey-links', 'POST', { client_id: parseInt(f.client_id), survey_type: f.survey_type });
+        if (aviso_cooldown) toast?.(aviso_cooldown, 'error');
         toast?.(`Link gerado: ${survey_url}`);
         if (navigator.clipboard) await navigator.clipboard.writeText(survey_url);
         toast?.('Link copiado para a área de transferência!');
@@ -2985,6 +3009,7 @@ function CsatNpsView({ toast }) {
       {[['overview','CSAT & NPS'],['links','Links Disparados']].map(([id,l]) => <div key={id} className={`tabbar-item ${tab===id?'active':''}`} onClick={() => setTab(id)}>{l}</div>)}
     </div>
 
+    {tab === 'overview' && <ReasonsReportCard />}
     {tab === 'overview' && <div className="grid-2">
       <div style={{ background: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,.08)', padding: '16px' }}>
         <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '10px' }}>⭐ Últimas Respostas CSAT</div>
@@ -2996,7 +3021,7 @@ function CsatNpsView({ toast }) {
             </div>
             {c.comment && <p style={{ color: 'var(--mid)', marginTop: '2px', fontStyle: 'italic' }}>"{c.comment}"</p>}
             <span style={{ color: 'var(--muted)' }}>{c.collection_date}</span>
-          </div>)}
+          {Array.isArray(c.reasons) && c.reasons.length > 0 && <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>{c.reasons.map((rz, ri) => <span key={ri} style={{ fontSize: '10px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: '10px', padding: '1px 8px', color: 'var(--muted)' }}>{rz}</span>)}</div>}</div>)}
       </div>
       <div style={{ background: '#fff', borderRadius: '12px', boxShadow: '0 1px 3px rgba(0,0,0,.08)', padding: '16px' }}>
         <div style={{ fontWeight: 700, fontSize: '13px', marginBottom: '10px' }}>📊 Últimas Respostas NPS</div>
@@ -3008,7 +3033,7 @@ function CsatNpsView({ toast }) {
             </div>
             {n.comment && <p style={{ color: 'var(--mid)', marginTop: '2px', fontStyle: 'italic' }}>"{n.comment}"</p>}
             <span style={{ color: 'var(--muted)' }}>{n.collection_date}</span>
-          </div>)}
+          {Array.isArray(n.reasons) && n.reasons.length > 0 && <div style={{ marginTop: '4px', display: 'flex', flexWrap: 'wrap', gap: '4px' }}>{n.reasons.map((rz, ri) => <span key={ri} style={{ fontSize: '10px', background: 'var(--bg)', border: '1px solid var(--line)', borderRadius: '10px', padding: '1px 8px', color: 'var(--muted)' }}>{rz}</span>)}</div>}</div>)}
       </div>
     </div>}
 

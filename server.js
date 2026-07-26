@@ -572,30 +572,53 @@ async function load() {
     render(d);
   } catch(e) { app.innerHTML = '<div class="err">Erro ao carregar pesquisa.</div>'; }
 }
+let reasons = [];
+const CHIPS = {
+  csat_low:  ['Demorou demais','Faltou comunicação','Problema voltou','Solução não atendeu','Atendimento ruim','Burocracia'],
+  csat_high: ['Rapidez','Comunicação clara','Resolveu de vez','Equipe técnica','Facilidade'],
+  nps_low:   ['Demorou demais','Faltou comunicação','Problema voltou','Solução não atendeu','Atendimento ruim','Burocracia','Preço/condições','Portfólio/disponibilidade'],
+  nps_high:  ['Rapidez','Comunicação clara','Resolveu de vez','Equipe técnica','Facilidade','Preço/condições','Portfólio/disponibilidade'],
+};
+function chipsFor(isCsat, sc) {
+  if (isCsat) return sc <= 3 ? { q:'O que mais pesou?', list:CHIPS.csat_low } : { q:'O que fez a diferença?', list:CHIPS.csat_high };
+  if (sc <= 6) return { q:'O que precisaria mudar para a Nextra ser sua primeira opção?', list:CHIPS.nps_low };
+  if (sc <= 8) return { q:'O que falta para nota 9 ou 10?', list:CHIPS.nps_low };
+  return { q:'O que você mais valoriza?', list:CHIPS.nps_high };
+}
 function render(d) {
   const isCsat = d.survey_type === 'csat';
   app.innerHTML = '<div class="logo"><div class="dot"></div><span>Nextra CSO Hub</span></div>'+
     '<h1>Olá, '+(d.client_name||'cliente')+'!</h1>'+
-    '<p>'+(isCsat?'Como você avalia o atendimento que recebeu?':'De 0 a 10, o quanto você recomendaria a Nextra a um colega?')+'</p>'+
+    '<p>'+(isCsat?'Como foi a resolução do seu atendimento?':'De 0 a 10, o quanto você recomendaria a Nextra a um colega?')+'</p>'+
     (isCsat?'<div class="stars" id="stars">'+[1,2,3,4,5].map(n=>'<span class="star" data-v="'+n+'">★</span>').join('')+'</div>'
            :'<div class="nps-row" id="nps">'+Array.from({length:11},(_,n)=>'<button class="nps-btn" data-v="'+n+'">'+n+'</button>').join('')+'</div>')+
-    '<textarea id="comment" placeholder="Comentário (opcional)"></textarea>'+
-    '<button class="submit" id="send" disabled>Enviar resposta</button>';
+    '<div id="step2" style="display:none"><p id="chipq" style="margin-bottom:10px;font-weight:600;color:#1A1730"></p>'+
+    '<div id="chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px"></div>'+
+    '<textarea id="comment" placeholder="Quer contar mais? (opcional)"></textarea>'+
+    '<button class="submit" id="send">Enviar resposta</button></div>';
   const picker = document.getElementById(isCsat?'stars':'nps');
   picker.addEventListener('click', e=>{
     const v = e.target.getAttribute('data-v'); if(v===null) return;
-    score = parseInt(v);
+    score = parseInt(v); reasons = [];
     [...picker.children].forEach(c=>c.classList.toggle('active', parseInt(c.getAttribute('data-v'))<=score && isCsat || c===e.target && !isCsat));
-    document.getElementById('send').disabled = false;
+    const cfg = chipsFor(isCsat, score);
+    document.getElementById('chipq').textContent = cfg.q;
+    document.getElementById('chips').innerHTML = cfg.list.map(c=>'<button type="button" class="chip" data-c="'+c+'" style="padding:8px 14px;border-radius:20px;border:1.5px solid #E4E0F5;background:#fff;font-size:13px;cursor:pointer;color:#1A1730">'+c+'</button>').join('');
+    document.getElementById('step2').style.display = 'block';
+    [...document.querySelectorAll('.chip')].forEach(ch=>ch.onclick=()=>{
+      const c = ch.getAttribute('data-c');
+      if (reasons.includes(c)) { reasons = reasons.filter(x=>x!==c); ch.style.background='#fff'; ch.style.color='#1A1730'; ch.style.borderColor='#E4E0F5'; }
+      else { reasons.push(c); ch.style.background='#6D40E6'; ch.style.color='#fff'; ch.style.borderColor='#6D40E6'; }
+    });
+    document.getElementById('send').onclick = submit;
   });
-  document.getElementById('send').onclick = submit;
 }
 async function submit() {
   const btn = document.getElementById('send'); btn.disabled = true; btn.textContent = 'Enviando...';
   try {
-    const r = await fetch('/api/v1/public/survey/'+token, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ score, comment: document.getElementById('comment').value }) });
+    const r = await fetch('/api/v1/public/survey/'+token, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ score, reasons, comment: document.getElementById('comment').value }) });
     if (!r.ok) throw new Error('Falha ao enviar');
-    app.innerHTML = '<div class="done"><div class="icon">✅</div><h1>Obrigado!</h1><p>Sua resposta foi registrada com sucesso.</p></div>';
+    app.innerHTML = '<div class="done"><div class="icon">✅</div><h1>Obrigado!</h1><p>Sua resposta foi registrada — e vai direto para o time que cuida disso.</p></div>';
   } catch(e) { btn.disabled = false; btn.textContent = 'Tentar novamente'; }
 }
 load();
@@ -1409,6 +1432,10 @@ load();
           try {
             const { rows:[cli] } = await db.query('SELECT id,name,email FROM clients WHERE id=$1', [u.client_id]);
             if (!cli?.email) return;
+            // v3.1: cooldown — o mesmo cliente não recebe pesquisa automática 2x em 30 dias
+            const { rows:[cd] } = await db.query(
+              `SELECT COUNT(*)::int AS n FROM survey_links WHERE client_id=$1 AND created_at > NOW() - INTERVAL '30 days'`, [cli.id]);
+            if (cd.n > 0) return;
             const stoken = crypto.randomBytes(20).toString('hex');
             await db.query(`INSERT INTO survey_links (token,survey_type,client_id,business_unit_id,ticket_id,created_by)
               VALUES ($1,'csat',$2,$3,$4,$5)`, [stoken, cli.id, u.business_unit_id||'led', u.id, user.sub]);
@@ -2127,7 +2154,26 @@ load();
         VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
         [token, d.survey_type, d.client_id, d.business_unit_id||'led', d.ticket_id||null, d.complaint_id||null, getUser(req).sub]);
       const base = (process.env.PUBLIC_BASE_URL||'').replace(/\/$/,'');
-      return reply.code(201).send({ ...link, survey_url: `${base}/survey/${token}` });
+      // v3.1: aviso de cooldown no disparo manual (permite, mas informa)
+      const { rows:[cd] } = await db.query(
+        `SELECT COUNT(*)::int AS n FROM survey_links WHERE client_id=$1 AND id<>$2 AND created_at > NOW() - INTERVAL '30 days'`, [d.client_id, link.id]);
+      const aviso_cooldown = cd.n > 0 ? 'Atenção: este cliente já recebeu pesquisa nos últimos 30 dias. Excesso de pesquisa derruba a taxa de resposta.' : null;
+      return reply.code(201).send({ ...link, survey_url: `${base}/survey/${token}`, aviso_cooldown });
+    });
+
+    // v3.1: relatório de motivos — onde dói e o que encanta, por volume
+    v1.get('/surveys/reports/reasons', { preHandler: [authenticate] }, async () => {
+      const safe = (p) => p.catch(() => ({ rows: [] }));
+      const [csatR, npsR, byArea] = await Promise.all([
+        safe(db.query(`SELECT unnest(reasons) AS reason, CASE WHEN score<=3 THEN 'negativo' ELSE 'positivo' END AS band, COUNT(*)::int AS n
+          FROM csat WHERE reasons IS NOT NULL GROUP BY 1,2 ORDER BY n DESC`)),
+        safe(db.query(`SELECT unnest(reasons) AS reason, CASE WHEN score<=6 THEN 'detrator' WHEN score<=8 THEN 'neutro' ELSE 'promotor' END AS band, COUNT(*)::int AS n
+          FROM nps WHERE reasons IS NOT NULL GROUP BY 1,2 ORDER BY n DESC`)),
+        safe(db.query(`SELECT t.area_responsible AS area, unnest(c.reasons) AS reason, COUNT(*)::int AS n
+          FROM csat c JOIN tickets t ON t.id=c.ticket_id WHERE c.reasons IS NOT NULL AND c.score<=3
+          GROUP BY 1,2 ORDER BY n DESC LIMIT 20`)),
+      ]);
+      return { csat: csatR.rows, nps: npsR.rows, csat_negativos_por_area: byArea.rows };
     });
 
     v1.get('/survey-links', { preHandler: [authenticate] }, async (req) => {
@@ -2158,12 +2204,37 @@ load();
       const { score, comment } = req.body || {};
       if (score===undefined) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'score obrigatório.', status:400 });
       try {
+        // v3.1: motivos estruturados (chips) — no máximo 10, saneados
+        const reasons = Array.isArray(req.body?.reasons)
+          ? req.body.reasons.filter(x => typeof x === 'string' && x.trim()).map(x => String(x).trim().slice(0, 60)).slice(0, 10)
+          : [];
         if (link.survey_type === 'csat') {
-          await db.query(`INSERT INTO csat (client_id,business_unit_id,ticket_id,complaint_id,score,comment,collection_date) VALUES ($1,$2,$3,$4,$5,$6,CURRENT_DATE)`,
-            [link.client_id, link.business_unit_id, link.ticket_id, link.complaint_id, score, comment||null]);
+          await db.query(`INSERT INTO csat (client_id,business_unit_id,ticket_id,complaint_id,score,comment,reasons,collection_date) VALUES ($1,$2,$3,$4,$5,$6,$7,CURRENT_DATE)`,
+            [link.client_id, link.business_unit_id, link.ticket_id, link.complaint_id, score, comment||null, reasons.length?reasons:null]);
         } else {
-          await db.query(`INSERT INTO nps (client_id,business_unit_id,score,comment,collection_date) VALUES ($1,$2,$3,$4,CURRENT_DATE)`,
-            [link.client_id, link.business_unit_id, score, comment||null]);
+          await db.query(`INSERT INTO nps (client_id,business_unit_id,score,comment,reasons,collection_date) VALUES ($1,$2,$3,$4,$5,CURRENT_DATE)`,
+            [link.client_id, link.business_unit_id, score, comment||null, reasons.length?reasons:null]);
+        }
+        // v3.1: detrator dispara reação — alerta na Torre/sino + e-mail, com os motivos anexados
+        const isDetractor = (link.survey_type === 'csat' && score <= 2) || (link.survey_type === 'nps' && score <= 6);
+        if (isDetractor) {
+          (async () => {
+            try {
+              const { rows:[cli] } = await db.query('SELECT id,name,account_manager_id FROM clients WHERE id=$1', [link.client_id]);
+              const motivos = reasons.length ? ` Motivos: ${reasons.join(', ')}.` : '';
+              const msg = `🚨 DETRATOR: ${cli?.name || 'Cliente'} respondeu ${link.survey_type.toUpperCase()} nota ${score}.${motivos} Sugerido: Plano de Recuperação.`;
+              await notifyUsers([cli?.account_manager_id], 'detractor_alert', msg, link.ticket_id, 'recovery');
+              await notifyAdmins('detractor_alert', msg, link.ticket_id, 'recovery');
+              const html = emailTemplate('🚨 Alerta de detrator', [
+                ['Cliente', cli?.name], ['Pesquisa', link.survey_type.toUpperCase()], ['Nota', String(score)],
+                reasons.length ? ['Motivos', reasons.join(', ')] : null,
+                comment ? ['Comentário', String(comment).slice(0, 250)] : null,
+                ['Ação sugerida', 'Abrir Plano de Recuperação'],
+              ].filter(Boolean), hubUrl(null));
+              emailUsersByIds([cli?.account_manager_id], `[ALERTA] Detrator — ${cli?.name}`, html).catch(()=>{});
+              emailUsersByRoles(['admin'], `[ALERTA] Detrator — ${cli?.name}`, html).catch(()=>{});
+            } catch (e) { console.error('detractorAlert:', e.message); }
+          })();
         }
         await db.query('UPDATE survey_links SET responded=TRUE, responded_at=NOW() WHERE id=$1', [link.id]);
         if (link.survey_type === 'csat') await refreshClientCsat(link.client_id);

@@ -19,6 +19,7 @@ const MIGRATIONS = [
   '013_app_settings.sql',
   '014_admin_delete.sql',
   '015_v3.sql',
+  '016_v31_survey_reasons.sql',
 ];
 
 async function migrate() {
