@@ -773,6 +773,18 @@ load();
       return rows;
     });
 
+    v1.get('/business-units', { preHandler: [authenticate] }, async () => {
+      const { rows } = await db.query(`SELECT id, name, color_hex FROM business_units WHERE is_active = true ORDER BY name`).catch(() => ({ rows: [] }));
+      return { data: rows };
+    });
+
+    // Valida FK de unidade de negócio antes de INSERTs (evita erro cru do Postgres na UI)
+    const assertBU = async (buId) => {
+      if (!buId) return null;
+      const { rows } = await db.query('SELECT 1 FROM business_units WHERE id=$1 AND is_active=true', [buId]);
+      return rows.length ? null : `Unidade de negócio inválida: "${buId}". Atualize a página e selecione uma opção válida.`;
+    };
+
     v1.get('/config/sla', { preHandler: [authenticate] }, async () => {
       const { rows } = await db.query('SELECT * FROM sla_config ORDER BY criticality').catch(() => ({ rows: [] }));
       return rows;
@@ -1615,6 +1627,7 @@ load();
     v1.post('/complaints', { preHandler: [authenticate] }, async (req, reply) => {
       const d = req.body || {};
       if (!d.client_id || !d.reason) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'client_id e reason obrigatórios.', status:400 });
+      const buErr = await assertBU(d.business_unit_id); if (buErr) return reply.code(422).send({ error:'VALIDATION_ERROR', message:buErr, status:422 });
       const user = getUser(req);
       try {
         const { rows:[c] } = await db.query(`
@@ -1738,6 +1751,7 @@ load();
     v1.post('/returns', { preHandler: [authenticate] }, async (req, reply) => {
       const d = req.body || {};
       if (!d.client_id || !d.reason) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'client_id e reason obrigatórios.', status:400 });
+      const buErr = await assertBU(d.business_unit_id); if (buErr) return reply.code(422).send({ error:'VALIDATION_ERROR', message:buErr, status:422 });
       try {
         const { rows:[r] } = await db.query(`
           INSERT INTO returns (client_id,business_unit_id,reason,quantity,product_name_snap,
@@ -1941,6 +1955,7 @@ load();
     v1.post('/rma', { preHandler: [authenticate] }, async (req, reply) => {
       const d = req.body || {};
       if (!d.product_name || !d.defect_description) return reply.code(400).send({ error:'VALIDATION_ERROR', message:'product_name e defect_description obrigatórios.', status:400 });
+      const buErr = await assertBU(d.business_unit_id); if (buErr) return reply.code(422).send({ error:'VALIDATION_ERROR', message:buErr, status:422 });
       const user = getUser(req);
       try {
         // v2.0: garantia calculada a partir do catálogo (warranty_months) + data de compra
@@ -2083,6 +2098,7 @@ load();
       const d = req.body || {};
       if (!d.name || !d.name.trim())
         return reply.code(400).send({ error:'VALIDATION_ERROR', message:'Nome do cliente é obrigatório.', status:400 });
+      const buErr = await assertBU(d.primary_bu); if (buErr) return reply.code(422).send({ error:'VALIDATION_ERROR', message:buErr, status:422 });
       if (d.cnpj) {
         const digits = String(d.cnpj).replace(/\D/g,'');
         if (digits.length !== 14)
