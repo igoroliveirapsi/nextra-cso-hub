@@ -149,6 +149,14 @@ const api = async (path, method='GET', body=null) => {
 
 const getUser = () => { const d = localStorage.getItem('user'); return d ? JSON.parse(d) : null; };
 
+// BUs reais do Grupo Nextra (fallback enquanto /business-units carrega; fonte da verdade é o banco)
+const BU_FALLBACK = [
+  { id: 'led', name: 'LED / PRO AV' },
+  { id: 'seg', name: 'Segurança Eletrônica' },
+  { id: 'av',  name: 'Áudio e Vídeo' },
+  { id: 'cab', name: 'Cabeamento Estruturado' },
+];
+
 // ── v2.0: helpers de arquivo e CSV ─────────────────────────────
 const fileToBase64 = (file) => new Promise((res, rej) => {
   const r = new FileReader();
@@ -1447,6 +1455,7 @@ function CreateComplaintModal({ onClose, onCreated, toast }) {
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [businessUnits, setBusinessUnits] = useState([]);
   const [f, setF] = useState({
     client_id: '', business_unit_id: 'led', type_key: 'other', severity: 'medium',
     channel: 'whatsapp', reason: '', client_feeling: 'neutral', procedence: 'under_analysis',
@@ -1457,6 +1466,7 @@ function CreateComplaintModal({ onClose, onCreated, toast }) {
   useEffect(() => { (async () => {
     try { const { data } = await api('/clients'); setClients(data || []); } catch(e) {}
     try { const u = await api('/users/lookup'); setUsers(u || []); } catch(e) {}
+    try { const b = await api('/business-units'); setBusinessUnits(b.data || []); } catch(e) {}
   })(); }, []);
 
   const submit = async (e) => {
@@ -1495,7 +1505,7 @@ function CreateComplaintModal({ onClose, onCreated, toast }) {
             <div className="form-group">
               <label className="form-label">Unidade de Negócio</label>
               <select className="form-input" value={f.business_unit_id} onChange={e => set('business_unit_id', e.target.value)}>
-                <option value="led">LED</option><option value="ooh">OOH/DOOH</option><option value="rm">Retail Media</option>
+                {(businessUnits.length ? businessUnits : BU_FALLBACK).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select>
             </div>
           </div>
@@ -1752,6 +1762,7 @@ function CreateReturnModal({ onClose, onCreated, toast }) {
   const [clients, setClients] = useState([]);
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [businessUnits, setBusinessUnits] = useState([]);
   const [f, setF] = useState({
     client_id: '', business_unit_id: 'led', reason: '', quantity: 1, product_name: '',
     unit_value: '', order_number: '', nf_number: '', nf_value: '', nf_attached: false,
@@ -1762,6 +1773,7 @@ function CreateReturnModal({ onClose, onCreated, toast }) {
   useEffect(() => { (async () => {
     try { const { data } = await api('/clients'); setClients(data || []); } catch(e) {}
     try { const u = await api('/users/lookup'); setUsers(u || []); } catch(e) {}
+    try { const b = await api('/business-units'); setBusinessUnits(b.data || []); } catch(e) {}
   })(); }, []);
 
   const submit = async (e) => {
@@ -1797,7 +1809,7 @@ function CreateReturnModal({ onClose, onCreated, toast }) {
               </select></div>
             <div className="form-group"><label className="form-label">Unidade de Negócio</label>
               <select className="form-input" value={f.business_unit_id} onChange={e => set('business_unit_id', e.target.value)}>
-                <option value="led">LED</option><option value="ooh">OOH/DOOH</option><option value="rm">Retail Media</option>
+                {(businessUnits.length ? businessUnits : BU_FALLBACK).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select></div>
           </div>
           <div className="form-group"><label className="form-label">Motivo da Devolução *</label>
@@ -2207,6 +2219,7 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
   const [products, setProducts] = useState([]); // v2.0: catálogo
   const [newSupplierName, setNewSupplierName] = useState('');
   const [busy, setBusy] = useState(false);
+  const [businessUnits, setBusinessUnits] = useState([]);
   const [f, setF] = useState({
     client_id: '', business_unit_id: 'led', ticket_id: '', product_name: '', product_code: '',
     serial_number: '', defect_description: '', warranty: false, unit_cost: '', supplier_id: '', responsible_user_id: '',
@@ -2227,6 +2240,7 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
   useEffect(() => { (async () => {
     try { const { data } = await api('/clients'); setClients(data || []); } catch(e) {}
     try { const u = await api('/users/lookup'); setUsers(u || []); } catch(e) {}
+    try { const b = await api('/business-units'); setBusinessUnits(b.data || []); } catch(e) {}
     loadSuppliers();
   })(); }, []);
 
@@ -2274,7 +2288,7 @@ function CreateRMAModal({ onClose, onCreated, toast }) {
               </select></div>
             <div className="form-group"><label className="form-label">Unidade de Negócio</label>
               <select className="form-input" value={f.business_unit_id} onChange={e => set('business_unit_id', e.target.value)}>
-                <option value="led">LED</option><option value="ooh">OOH/DOOH</option><option value="rm">Retail Media</option>
+                {(businessUnits.length ? businessUnits : BU_FALLBACK).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select></div>
           </div>
           <div className="form-row">
@@ -2604,6 +2618,7 @@ function ClientFormModal({ client, onClose, onSaved, toast }) {
   const isEdit = !!client;
   const [users, setUsers] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [businessUnits, setBusinessUnits] = useState([]);
   const [f, setF] = useState({
     name: client?.name || '', cnpj: client?.cnpj || '', city: client?.city || '', state: client?.state || '',
     segment: client?.segment || '', is_vip: client?.is_vip || false, primary_bu: client?.primary_bu || 'led',
@@ -2612,7 +2627,10 @@ function ClientFormModal({ client, onClose, onSaved, toast }) {
   });
   const set = (k,v) => setF(p => ({ ...p, [k]: v }));
 
-  useEffect(() => { (async () => { try { setUsers(await api('/users/lookup')); } catch(e) {} })(); }, []);
+  useEffect(() => { (async () => {
+    try { setUsers(await api('/users/lookup')); } catch(e) {}
+    try { const b = await api('/business-units'); setBusinessUnits(b.data || []); } catch(e) {}
+  })(); }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -2663,7 +2681,7 @@ function ClientFormModal({ client, onClose, onSaved, toast }) {
           <div className="form-row">
             <div className="form-group"><label className="form-label">Unidade de Negócio Principal</label>
               <select className="form-input" value={f.primary_bu} onChange={e => set('primary_bu', e.target.value)}>
-                <option value="led">LED</option><option value="ooh">OOH/DOOH</option><option value="rm">Retail Media</option>
+                {(businessUnits.length ? businessUnits : BU_FALLBACK).map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
               </select></div>
             <div style={{ display:'flex', alignItems:'flex-end', paddingBottom:'10px' }}>
               <label style={{ display:'flex', alignItems:'center', gap:'8px', cursor:'pointer', fontSize:'13px' }}>
